@@ -1,40 +1,121 @@
-# SPEC.md — Databricks Genie Workbench Agent Skills Plugin
+# SPEC.md — Databricks Genie Workbench Agent Skills + MCP Server
 
-Status: draft 0.2  
-Target repository name: `databricks-genie-workbench-skills`  
-Source-of-truth companion project: `databricks-solutions/databricks-genie-workbench`  
-Primary user: Databricks users who want Genie Workbench workflows through Genie Code Agent mode without deploying a Databricks App.
+Status: draft 0.3
+Target location: subdirectory inside `databricks-solutions/databricks-genie-workbench`
+Primary user: Databricks users who want Genie Workbench workflows through Genie Code Agent mode, backed by an MCP server hosted by the existing Workbench Databricks App.
 
 ## 1. Summary
 
-Build a workspace-installable Agent Skills bundle for Databricks Genie Code. The bundle packages focused user-facing skills plus a shared Python implementation layer that allows a coding agent to create, score, and optimize Databricks Genie Spaces using the same operating model and quality standards as Genie Workbench, but without a FastAPI/React Databricks App.
+Build an Agent Skills bundle for Databricks Genie Code that delegates all deterministic logic to an MCP (Model Context Protocol) server exposed by the existing Genie Workbench Databricks App. Skills contain workflow instructions; the MCP server contains every action the agent can take. There is no second Python implementation of Workbench logic — the MCP server is a route group inside the Workbench backend that adapts existing services (scanner, create agent, GSO optimizer, space update) into MCP tools and resources.
 
-The project is a companion repo to Genie Workbench. Genie Workbench remains the app-based, UI-first product. This project is the agent-first alternative: users invoke skills in Genie Code Agent mode and the agent runs bundled scripts, reads bundled references, produces auditable artifacts, and calls Databricks APIs directly.
+This shape lets users drive create / score / optimize from inside Genie Code without leaving their development context, while keeping a single source of truth for scoring rubrics, validators, optimizer engines, and applied changes. The Workbench app remains the operational unit; its React UI is optional and can be disabled when an organization only needs the agent surface.
 
-This project should not include a standalone readiness-remediation skill. That Workbench workflow is expected to be deprecated. Any space-update logic required by create or optimization workflows must live in shared code and must only run behind explicit review and approval gates.
+## 2. Architecture: skills + MCP server hosted by Workbench
 
-## 2. Architecture decision: skill bundle with shared core
+### 2.1 Components and roles
 
-The project should use **multiple task-specific skills**, not one large skill.
+**Genie Code (Agent mode).** The user-facing surface. Routes user intent to skills by `name` / `description`. Invokes MCP tools and renders results conversationally. Owns multi-turn dialog and approval prompts. Does not run any Genie Workbench logic locally.
 
-Recommended skill set:
+**Agent Skills bundle.** A small set of `SKILL.md` files installed under `.assistant/skills/`. Each skill is a Markdown workflow that names the MCP tools to call, the order to call them in, what to ask the user before each step, and how to interpret results. Skills contain no Python logic — they are pure orchestration. References and assets are static templates and rubric documentation.
 
-1. `genie-space-create`
-2. `genie-space-score`
-3. `genie-space-optimize`
-4. `genie-workbench-parity`
+**MCP server (inside the Workbench app).** A FastAPI route group inside the existing Workbench backend. Exposes Workbench's existing services as MCP tools (actions) and MCP resources (read-only data). Authenticates Genie Code clients with the Workbench app's OAuth pass-through. Runs every deterministic operation — scoring, validation, ID hygiene, sort / merge, diff, gate evaluation, PATCH application — as in-process Python calls against existing Workbench services.
 
-The skills should share one implementation package: `genie_workbench_skills`. Each skill folder contains a focused `SKILL.md`, small wrapper scripts, and task-specific reference files. Common logic such as Genie API access, `serialized_space` validation, Unity Catalog discovery, SQL execution, artifact writing, config diffing, and approved configuration application belongs in the shared package.
+**Workbench Databricks App.** The host. Owns Lakebase, optimizer state tables, scan inventory, GSO Lakeflow job bootstrap, MLflow tracing, and (optionally) the React UI. Its existing service layer is unchanged; the MCP route group is a new consumer of those services.
 
-Rationale:
+### 2.2 Request flow
 
-- Genie Code routes skills by `name` and `description`; narrower skills make routing and manual `@skill` invocation clearer.
-- Agent Skills use progressive disclosure: only the matching skill instructions are loaded into context. A single large skill would load unrelated create, score, optimization, and maintainer instructions together.
-- Shared code avoids duplicated assets. The overlap is implementation-level, not user-intent-level.
-- Separate skills make it easier to add or update one capability when Genie Workbench changes.
-- A bundle-level manifest can still make the repository feel like a plugin even though the runtime unit is a collection of skills.
+```
+[User in Genie Code]
+       |
+       |  "@genie-space-score 3c409c00..."
+       v
+[Genie Code Agent mode]
+   - matches skill by name/description
+   - reads skills/genie-space-score/SKILL.md
+   - calls MCP tool: score_space(space_id="...")
+       |
+       |  HTTPS + OAuth pass-through (user identity)
+       v
+[Workbench App: MCP route group  (backend/mcp/)]
+   - validates auth context
+   - dispatches to backend/services/scanner.py
+       |
+       v
+[Workbench backend services]
+   - scanner reads serialized_space
+   - enriches via UC metadata
+   - reads optimization history from Lakebase
+   - returns deterministic score
+       |
+       v
+[MCP route group]
+   - serializes response per MCP tool schema
+       |
+       v
+[Genie Code Agent mode]
+   - renders Markdown report inline
+   - optionally writes artifact to user workspace folder
+   - prompts user for next action
+```
 
-Do not create separate copies of Genie API wrappers, `serialized_space` schemas, scoring helpers, or optimizer helpers inside each skill. Use thin skill scripts that call the shared package.
+Mutations (`create_genie_space`, `bootstrap_gso_job`, `apply_optimization_result`) follow the same flow but require an approval token issued by a prior validation tool and presented back to the mutating tool. The approval prompt is enforced in the skill instructions; the token is the cryptographic guard that prevents the agent from skipping the prompt.
+
+### 2.3 Why this shape
+
+- **Single source of truth.** Every rubric, validator, and optimizer change lands in Workbench services and is immediately reflected in MCP tool behavior. No parity tracking, no version-pinned baselines, no drift.
+- **Determinism without local Python.** Genie Code clients do not need a Python environment, wheel installation, or `PYTHONPATH` manipulation. The MCP server is the runtime.
+- **Centralized state.** Run history, scan inventory, optimizer outputs, and applied change events live in Lakebase as they already do. The agent surface and the UI surface read the same tables.
+- **Centralized governance.** Approval gates, identity checks, and audit logs are enforced server-side, not by client convention.
+- **Slim deploy when desired.** Organizations that only want the agent surface can deploy Workbench with the React UI disabled. The backend is unchanged.
+
+### 2.4 Repository placement
+
+Both the skills bundle and the MCP server live inside `databricks-solutions/databricks-genie-workbench`. This is a subdirectory within the existing repo, not a separate project, not a submodule.
+
+```text
+databricks-genie-workbench/                  # existing repo
+  backend/
+    services/                                 # existing Workbench services (unchanged)
+    routers/
+      mcp.py                                  # NEW: MCP route registration
+    mcp/                                      # NEW: MCP server module
+      __init__.py
+      server.py                               # MCP protocol handler
+      auth.py                                 # OAuth context bridge
+      approvals.py                            # token issuance + verification
+      tools/
+        spaces.py
+        create.py
+        score.py
+        optimize.py
+      resources/
+        spaces.py
+        runs.py
+  packages/
+    genie-skills/                             # NEW: installable skills bundle
+      plugin.json
+      README.md
+      install.py
+      build.py
+      skills/
+        genie-space-create/
+        genie-space-score/
+        genie-space-optimize/
+      tests/
+        static/
+        integration/
+    genie-space-optimizer/                    # existing
+  databricks.yml                              # existing
+```
+
+Rationale for in-repo placement (versus submodule or standalone repo):
+
+- The MCP server's only job is to expose Workbench services. Keeping it next to those services means tools are function calls, not RPC.
+- Logic changes (scanner rubric, validator rules, optimizer levers) ship in the same commit as MCP tool changes. No drift, no parity skill, no version coordination.
+- Single release train. Bundle release artifacts are produced as part of Workbench's release.
+- One issue tracker, one CI surface, one set of integration tests against Lakebase.
+
+This project does not include a `genie-workbench-parity` skill — the parity problem does not exist when the MCP server and Workbench services share a process.
 
 ## 3. Product goals
 
@@ -42,62 +123,66 @@ Do not create separate copies of Genie API wrappers, `serialized_space` schemas,
    - Create a new Genie Space from business requirements and Unity Catalog sources.
    - Score an existing Genie Space for readiness and optimization suitability.
    - Run a benchmark-driven optimization workflow to improve benchmark accuracy.
-   - Track outputs and change history without a Databricks App.
-2. Package all skills and helper code as a downloadable bundle that can be installed into a Databricks workspace skills folder or a user skills folder.
-3. Make the skill instructions explicit enough that a coding agent knows what to inspect, what code to run, what artifacts to create, when to ask for approval, and how to apply changes safely.
-4. Keep parity with Genie Workbench features over time through a documented upstream-feature map and update workflow.
-5. Avoid requiring users to deploy Genie Workbench, Lakebase, Node.js, React, FastAPI, or a Databricks App.
+2. Expose every deterministic action as an MCP tool backed by the existing Workbench service layer. No second implementation.
+3. Package the skills bundle as a downloadable artifact that can be installed into a user or workspace skills folder.
+4. Make the MCP server discoverable and connectable from Genie Code with one configuration step against the Workbench App URL.
+5. Reuse Workbench's existing state model (Lakebase tables, optimizer state, change events) so agent runs and UI runs are visible to each other.
 
 ## 4. Non-goals
 
-1. Do not build a web UI, FastAPI backend, React frontend, or Databricks App.
-2. Do not replace Genie Workbench for dashboard-style administration, central scan inventory, org-wide leaderboard views, persistent multi-user UI state, or version rollback UI.
-3. Do not implement the deprecated standalone readiness-remediation workflow as a skill.
-4. Do not auto-apply destructive or irreversible changes without an explicit user approval step.
-5. Do not require workspace-admin permissions for basic user-scope installation.
-6. Do not assume every workspace has MLflow Prompt Registry, a GSO Lakeflow job, or Workbench state tables already configured; the plugin must preflight and degrade or fail clearly.
+1. Do not maintain a separate Python implementation of scoring, validation, optimizer, or apply logic. Skills must call MCP tools, not local scripts.
+2. Do not require workspace-admin permissions for installing the skills bundle into a user skills folder. (Workspace-admin is needed to deploy or upgrade the Workbench app, which is a separate operational concern.)
+3. Do not auto-apply destructive or irreversible changes without an explicit user approval step, enforced server-side in the MCP layer.
+4. Do not implement the deprecated standalone readiness-remediation workflow as a skill; remediation is part of optimization apply, behind approval gates.
+5. Do not add a parity-tracking skill; both surfaces ship together.
+6. Do not assume Genie Code clients have a Python runtime, the Databricks SDK, or workspace files access. Skills must function MCP-only.
 
 ## 5. External compatibility requirements
 
 ### 5.1 Agent Skills format
 
-Each user-facing skill must be a folder containing a required `SKILL.md` file. `SKILL.md` must contain YAML frontmatter with at least `name` and `description`, followed by Markdown instructions. Skill names must be lowercase, hyphenated, and match the parent folder name.
+Each user-facing skill is a folder containing a required `SKILL.md` with YAML frontmatter (`name`, `description`, plus metadata) and Markdown instructions. Skill names are lowercase, hyphenated, and match the parent folder.
 
 Skill folders may include:
 
 ```text
-scripts/      # thin executable wrappers for the shared Python package
 references/   # task-specific Markdown docs, schemas, checklists, examples
 assets/       # templates and static input schemas
 ```
 
+Skills do not contain `scripts/` directories. All actions are MCP tool calls.
+
 ### 5.2 Databricks Genie Code installation paths
 
-The bundle must support two install scopes:
-
 ```text
-/Users/{username}/.assistant/skills/      # user skills
+/Users/{username}/.assistant/skills/      # user skills (default)
 Workspace/.assistant/skills/              # workspace skills
 ```
 
-Workspace installation is intended for shared team use and may require workspace-admin rights or write access to the workspace skills folder. User installation is the default.
+### 5.3 MCP protocol
 
-### 5.3 Databricks Genie Space APIs
+The MCP server speaks Model Context Protocol over HTTP/SSE.
 
-The bundle must use Databricks Genie management and conversation APIs through `databricks-sdk` or direct REST calls through `WorkspaceClient.api_client.do()`.
+- Endpoint: `https://<workbench-app-host>/mcp`.
+- Authentication: OAuth pass-through using the Workbench Databricks App's identity flow. The user authenticates once to the app; Genie Code reuses that token for MCP requests.
+- Tool list and tool schemas are advertised through standard MCP discovery.
+- Each tool response includes structured content (JSON) and an optional human-readable summary.
+- The server exposes a `server_info` resource carrying the Workbench app version for compatibility checks.
 
-Minimum API operations:
+### 5.4 Databricks Genie Space APIs
+
+The MCP server is the only component that calls Databricks Genie REST APIs. Skills never call them directly. Underlying operations exposed through MCP tools:
 
 - List spaces.
 - Get a space and read `serialized_space`.
-- Create a space with `POST /api/2.0/genie/spaces`.
-- Update a space with `PATCH /api/2.0/genie/spaces/{space_id}` when approved optimization results need to be applied.
+- Create a space (`POST /api/2.0/genie/spaces`).
+- Update a space (`PATCH /api/2.0/genie/spaces/{space_id}`).
 - Start conversations and retrieve generated SQL for benchmark runs.
-- Use native Genie evaluation endpoints when available and useful.
+- Native Genie evaluation endpoints when available and useful.
 
-### 5.4 `serialized_space` constraints
+### 5.5 `serialized_space` constraints
 
-All generated or updated space configs must pass Databricks validation rules before API submission:
+Validation rules remain authoritative and are enforced inside the MCP `validate_serialized_space` tool, implemented by Workbench's existing `serialized_space` service:
 
 - `version` is required and should be `2` for new spaces unless Databricks changes the supported schema.
 - Required IDs must be 32-character lowercase hexadecimal strings.
@@ -112,13 +197,11 @@ All generated or updated space configs must pass Databricks validation rules bef
 - Benchmark answers must have exactly one answer with format `SQL`.
 - SQL snippet SQL fields cannot be empty.
 
+Skills must call `validate_serialized_space` before any create or update step.
+
 ## 6. User personas and workflows
 
 ### 6.1 Genie Space developer
-
-The developer wants to create or improve a Genie Space using conversational assistance inside Genie Code.
-
-Example requests:
 
 ```text
 @genie-space-create Build a Genie Space for sales performance using catalog.sales.orders and catalog.sales.customers.
@@ -134,39 +217,29 @@ Example requests:
 
 ### 6.2 Data platform team
 
-The team wants reusable, version-controlled workflows that can be installed as workspace skills and used consistently across teams.
-
-Example request:
-
 ```text
 @genie-space-score Scan all spaces I can manage and write a readiness report to my workspace folder.
 ```
 
-### 6.3 Maintainer of this companion repo
+The MCP server returns the score data; the skill instructs the agent to render Markdown and write it to the user's workspace folder via Genie Code's filesystem tools. The server simultaneously persists a row in `genie_skill_scores` for cross-surface visibility.
 
-The maintainer wants to update skills when Genie Workbench adds or changes a feature.
+### 6.3 Workbench app operator
 
-Example request:
-
-```text
-@genie-workbench-parity Compare this repo against the current Genie Workbench main branch and propose skill updates.
-```
+The team operating the Workbench app deploys it once. Both the UI and the MCP route group are enabled by default; the UI can be disabled via a deploy flag for agent-only deployments. MCP tool list, version, and connected client count are visible in the app's standard observability surface.
 
 ## 7. Skill catalog
 
-The project must ship the following skills in the first release.
-
 ### 7.1 `genie-space-create`
 
-Purpose: Build a new Genie Space from requirements, inspect data sources, generate a plan, validate SQL, assemble `serialized_space`, and create the space after explicit approval.
+Purpose: Build a new Genie Space from requirements through MCP tool calls; create only after explicit approval.
 
 When it should activate:
 
 - User asks to create, build, scaffold, or configure a Genie Space.
-- User asks to turn business requirements and Unity Catalog tables into a Genie Space.
+- User asks to turn business requirements + UC tables into a Genie Space.
 - User asks for sample questions, example SQLs, benchmarks, joins, measures, filters, expressions, or text instructions for a new space.
 
-Required bundled assets:
+Bundled assets:
 
 ```text
 skills/genie-space-create/
@@ -176,73 +249,50 @@ skills/genie-space-create/
   references/serialized-space-rules.md
   references/gsl-instruction-template.md
   assets/space-plan-template.json
-  assets/create-request-template.json
-  scripts/create_space.py
-  scripts/discover_sources.py
-  scripts/profile_sources.py
-  scripts/generate_config.py
-  scripts/validate_config.py
-  scripts/test_sqls.py
 ```
 
-Expected workflow:
+MCP tools the skill should call (defined in §9):
 
-1. Gather business context, intended audience, domain terminology, default assumptions, required metrics, and target workspace folder.
-2. Discover candidate Unity Catalog assets with the user’s permissions.
-3. Inspect selected tables or metric views:
-   - Table comments.
-   - Column names, types, comments.
-   - Candidate PII or sensitive columns.
-   - ETL or metadata columns to exclude.
-   - Distinct values for categorical columns.
-   - Date ranges for date columns.
-   - Null rates and simple quality issues.
-4. Generate a structured plan with these sections:
-   - Space title and description.
-   - Included tables and metric views.
-   - Column configs, descriptions, synonyms, exclusions, entity matching, and format assistance.
-   - Five sample questions.
-   - One concise text instruction body using canonical sections.
-   - At least 8 and preferably 10–15 example question-SQL pairs with usage guidance.
-   - At least 10 benchmark question-SQL pairs.
-   - Join specs for multi-source spaces.
-   - SQL snippets: measures, filters, and expressions.
-5. Test all example SQLs and benchmark SQLs against the selected warehouse.
-6. Repair or drop invalid SQL artifacts before create.
-7. Build `serialized_space` and run validation.
-8. Present a plan and diff-like summary for user approval.
-9. Only after approval, call the Genie create-space API.
-10. Write output artifacts.
+- `discover_uc_assets`
+- `inspect_table`
+- `profile_columns`
+- `validate_space_plan`
+- `assemble_serialized_space`
+- `validate_serialized_space`
+- `test_sql`
+- `create_genie_space`
 
-Required outputs:
+Workflow:
 
-```text
-outputs/<space-slug-or-id>/plan.json
-outputs/<space-slug-or-id>/serialized_space.json
-outputs/<space-slug-or-id>/validation.json
-outputs/<space-slug-or-id>/create_result.json
-outputs/<space-slug-or-id>/README.md
-```
+1. Gather business context, audience, terminology, default assumptions, target folder.
+2. `discover_uc_assets` to find candidate tables and metric views.
+3. `inspect_table` and `profile_columns` for selected sources.
+4. Generate plan sections (LLM work, guided by skill instructions and `references/`).
+5. `test_sql` for every example and benchmark SQL.
+6. Repair or drop invalid SQL artifacts.
+7. `assemble_serialized_space` then `validate_serialized_space` (validation issues an approval token if clean).
+8. Present plan and diff for user approval.
+9. After explicit approval: `create_genie_space` with the approval token.
+10. Skill writes plan, validation, and create result artifacts to the user's workspace folder via Genie Code's filesystem tools. The MCP server simultaneously persists a `runs` row in Lakebase.
 
-Safety rules:
+Safety rules (server-enforced where possible):
 
-- Do not create a space until the user has reviewed the plan.
-- Do not include columns flagged as PII unless the user explicitly confirms they are safe and permitted.
-- Do not invent categorical values; use profiled values or omit value-specific filters.
-- Prefer SQL expressions, example SQLs, and snippets over long text instructions.
-- Keep text instructions short and business-focused; do not put SQL code in text instructions.
+- `create_genie_space` rejects calls without a valid approval token bound to the same `serialized_space` payload hash.
+- PII flags surface in `inspect_table` results; skill instructions tell the agent to confirm before including flagged columns.
+- `validate_serialized_space` rejects invented categorical values (no surrogate value source).
+- Length limits and "no SQL in text instructions" are enforced by `validate_serialized_space`.
 
 ### 7.2 `genie-space-score`
 
-Purpose: Score a Genie Space for readiness using a deterministic scanner modeled on Genie Workbench quality scoring.
+Purpose: Score readiness using Workbench's deterministic scanner exposed as MCP tools.
 
 When it should activate:
 
-- User asks to score, scan, grade, assess, audit, or check readiness of a Genie Space.
+- User asks to score, scan, grade, assess, audit, or check readiness of a space.
 - User asks whether a space is ready to optimize.
 - User asks for missing metadata, missing examples, missing benchmarks, or quality gaps.
 
-Required bundled assets:
+Bundled assets:
 
 ```text
 skills/genie-space-score/
@@ -250,14 +300,16 @@ skills/genie-space-score/
   references/iq-rubric.md
   references/score-output-schema.md
   references/readiness-next-steps.md
-  scripts/score_space.py
-  scripts/score_all_spaces.py
-  scripts/render_score_report.py
 ```
 
-Required score model:
+MCP tools:
 
-The scanner must implement the current Genie Workbench readiness model as a source-of-truth port. The first implementation should support these deterministic checks, then keep the rubric synchronized through the parity workflow.
+- `score_space`
+- `score_all_spaces`
+- `get_space_findings`
+- `render_score_report`
+
+Score model: identical to Workbench's current readiness model — implemented exactly once, in Workbench's scanner service. The deterministic checks remain:
 
 | # | Check | Pass rule |
 |---|---|---|
@@ -280,36 +332,26 @@ Maturity tiers:
 - `Ready to Optimize`: checks 1–10 pass.
 - `Not Ready`: any check in 1–10 fails.
 
-The report may show both `score` out of 12 and normalized `score_percent = score / 12 * 100` to align with percentage-style Workbench quality reporting.
+`score_space` returns both `score` (0–12) and `score_percent` (`score / 12 * 100`).
 
-Required scanner behavior:
+Workflow:
 
-1. Fetch `serialized_space` for the target space.
-2. Enrich table and column descriptions from Unity Catalog when possible. Inline space descriptions take precedence and must not be overwritten.
-3. Load terminal optimization run data from plugin output history, optional Delta state tables, and Workbench/GSO state tables if configured.
-4. Run all checks deterministically without LLM calls.
-5. Return findings, recommended next steps, warnings, and warning next steps.
-6. Render a Markdown report and JSON result.
-
-Required outputs:
-
-```text
-outputs/<space-id>/score.json
-outputs/<space-id>/score_report.md
-outputs/<space-id>/findings.json
-```
+1. Resolve target space (one or many).
+2. `score_space` (or `score_all_spaces`) returns score, findings, recommended next steps, warnings.
+3. Optional `render_score_report` for a Markdown report.
+4. Skill writes outputs to user's workspace folder; the server persists a row in `genie_skill_scores`.
 
 ### 7.3 `genie-space-optimize`
 
-Purpose: Run a benchmark-driven optimization workflow to improve Genie Space benchmark accuracy.
+Purpose: Run benchmark-driven optimization through MCP, with apply gated by explicit user approval.
 
 When it should activate:
 
-- User asks to optimize a Genie Space for accuracy.
-- User asks to run benchmark evaluation, measure generated SQL quality, diagnose failures, or improve benchmark pass rate.
-- User asks to run Auto-Optimize or GSO-like workflow without deploying the Workbench app.
+- User asks to optimize a space for accuracy.
+- User asks to run benchmark eval, measure SQL quality, diagnose failures, improve pass rate.
+- User asks to run Auto-Optimize / GSO-like workflow.
 
-Required bundled assets:
+Bundled assets:
 
 ```text
 skills/genie-space-optimize/
@@ -317,202 +359,74 @@ skills/genie-space-optimize/
   references/optimization-workflow.md
   references/lever-catalog.md
   references/evaluation-gates.md
-  references/gso-job-setup.md
   references/apply-review-checklist.md
-  scripts/preflight_optimizer.py
-  scripts/bootstrap_gso_job.py
-  scripts/run_baseline.py
-  scripts/run_optimization.py
-  scripts/poll_run.py
-  scripts/render_optimization_report.py
-  scripts/apply_optimization_result.py
 ```
 
-Optimization modes:
+MCP tools:
 
-#### Mode A — Full GSO parity mode
+- `preflight_optimization`
+- `bootstrap_gso_job`
+- `start_optimization_run`
+- `get_optimization_run`
+- `get_optimization_changes`
+- `apply_optimization_result`
 
-This is the preferred mode. It reuses, vendors, submodules, or depends on the Genie Workbench `packages/genie-space-optimizer` engine and runs the same Lakeflow Job workflow without deploying the Workbench app.
+Optimization modes (both backed by Workbench's existing optimizer):
 
-Pipeline:
+- **Mode A — Full GSO mode.** Uses Workbench's `packages/genie-space-optimizer` engine and Lakeflow Job. `bootstrap_gso_job` is a privileged tool requiring approval. Supports the same lever categories (tables / columns, metric views, table-valued functions, join specs, instructions / example SQL) and 3-gate evaluation (slice, P0, full benchmark).
+- **Mode B — Lightweight in-app mode.** Runs benchmark eval inside the Workbench backend without the GSO job. Sufficient for small spaces and quick experiments. `start_optimization_run` selects the mode based on availability and user request.
 
-1. Preflight.
-2. Baseline evaluation.
-3. Enrichment.
-4. Lever loop.
-5. Finalize.
-6. Staged deploy review.
+Preflight requirements (validated by `preflight_optimization`):
 
-Required characteristics:
+- User can manage or edit the target Genie Space.
+- A SQL warehouse is available with CAN USE.
+- User identity (or configured job identity) can read referenced UC tables.
+- 10+ benchmark questions or candidate generation approved.
+- `serialized_space` passes validation.
+- For full GSO mode: MLflow / Prompt Registry / UC state schema prerequisites pass.
 
-- Uses the same optimizer state schema and Delta table model where practical.
-- Supports the same lever categories:
-  - Tables and columns.
-  - Metric views.
-  - Table-valued functions.
-  - Join specs.
-  - Instructions and example SQL.
-- Supports 3-gate evaluation:
-  - Slice gate.
-  - P0 gate.
-  - Full benchmark gate.
-- Tracks accepted and rejected changes.
-- Stores baseline and final accuracy.
-- Allows staged review before applying changes to the live space.
+Apply rules (server-enforced):
 
-#### Mode B — Lightweight local optimization mode
+- Default `apply_mode` is `staged`. `apply_optimization_result` returns a change artifact and does not PATCH the live space.
+- `apply_mode=auto` requires (a) explicit user request via skill prompt, (b) accuracy non-regression vs. baseline, (c) all gates passed.
+- Apply path: re-fetch live space → merge changes → sanitize IDs → validate → diff → require approval token → PATCH → rescore. All inside the MCP server.
 
-This mode is used when the full GSO job is not installed or cannot run. It should be sufficient for small spaces and quick experiments but must not be represented as full Workbench parity.
+## 8. Bundle and server design
 
-Pipeline:
-
-1. Validate benchmarks.
-2. Ask Genie benchmark questions and retrieve generated SQL.
-3. Execute generated SQL and expected SQL.
-4. Compare results using deterministic checks and optional LLM judge prompts.
-5. Cluster failure causes.
-6. Generate candidate changes for metadata, examples, joins, snippets, or benchmarks.
-7. Test candidates on a small benchmark slice.
-8. Present measured results and a staged change plan.
-9. Apply only after user approval.
-
-Preflight requirements for both modes:
-
-- The user can manage or edit the target Genie Space.
-- A SQL warehouse is available and the user has CAN USE.
-- The user or configured job identity can read referenced Unity Catalog tables.
-- The space has at least 10 benchmark questions or the skill can generate benchmark candidates and ask the user to approve them.
-- `serialized_space` passes validation before optimization begins.
-- The output folder is writable.
-- If full GSO mode is selected, required MLflow/Prompt Registry and UC state schema prerequisites are checked.
-
-Required outputs:
+### 8.1 Skills bundle layout
 
 ```text
-outputs/<space-id>/optimization/<run-id>/preflight.json
-outputs/<space-id>/optimization/<run-id>/baseline_results.json
-outputs/<space-id>/optimization/<run-id>/failure_clusters.json
-outputs/<space-id>/optimization/<run-id>/change_candidates.json
-outputs/<space-id>/optimization/<run-id>/accepted_changes.json
-outputs/<space-id>/optimization/<run-id>/final_results.json
-outputs/<space-id>/optimization/<run-id>/optimization_report.md
-```
-
-Apply rules:
-
-- Default `apply_mode` is `staged`; the bundle produces a change artifact but does not update the live space.
-- `apply_mode=auto` is allowed only if the user explicitly requests it and the final result improves accuracy without failing regression gates.
-- Applying optimization results must re-fetch the live space, merge changes, sanitize IDs, validate `serialized_space`, show a diff, require user approval, PATCH the space, and rescore.
-
-### 7.4 `genie-workbench-parity`
-
-Purpose: Help maintainers update this bundle when Genie Workbench adds or changes features.
-
-When it should activate:
-
-- User asks to update skills based on a new Workbench release.
-- User asks to compare this repo against the Workbench repo.
-- User asks to add a new skill that mirrors a Workbench capability.
-
-Required bundled assets:
-
-```text
-skills/genie-workbench-parity/
-  SKILL.md
-  references/parity-process.md
-  references/upstream-feature-map.yaml
-  scripts/check_workbench_parity.py
-  scripts/generate_skill_stub.py
-  scripts/update_feature_map.py
-```
-
-Required behavior:
-
-1. Read `references/upstream-feature-map.yaml`.
-2. Compare mapped Workbench files, docs, APIs, and tests against the plugin implementation.
-3. Identify added, removed, or changed capabilities.
-4. Classify each change:
-   - Update an existing skill instruction.
-   - Update shared code assets.
-   - Add a new skill.
-   - Mark as app-only or excluded.
-5. Generate a proposed changelog entry and implementation tasks.
-6. Refuse to silently overwrite skill instructions; produce a diff for maintainer review.
-
-## 8. Bundle package design
-
-### 8.1 Repository layout
-
-```text
-databricks-genie-workbench-skills/
-  SPEC.md
-  README.md
-  LICENSE.md
-  NOTICE.md
-  pyproject.toml
-  uv.lock
+packages/genie-skills/
   plugin.json
+  README.md
+  install.py
+  build.py
   skills/
     genie-space-create/
       SKILL.md
       references/
       assets/
-      scripts/
     genie-space-score/
       SKILL.md
       references/
       assets/
-      scripts/
     genie-space-optimize/
       SKILL.md
       references/
       assets/
-      scripts/
-    genie-workbench-parity/
-      SKILL.md
-      references/
-      assets/
-      scripts/
-  src/
-    genie_workbench_skills/
-      __init__.py
-      artifact_store.py
-      auth.py
-      benchmark_eval.py
-      create_plan.py
-      genie_api.py
-      gso_bootstrap.py
-      iq_score.py
-      optimizer.py
-      parity.py
-      reporting.py
-      safety.py
-      serialized_space.py
-      space_update.py
-      sql_warehouse.py
-      uc_metadata.py
-  scripts/
-    build_plugin.py
-    install_plugin.py
-    validate_plugin.py
-    sync_from_workbench.py
   tests/
-    fixtures/
-      serialized_spaces/
-      score_results/
-      optimization_runs/
-    unit/
-    integration/
-  dist/
-    .gitkeep
+    static/             # SKILL.md validation, MCP tool reference checks
+    integration/        # opt-in tests against a running Workbench app
 ```
+
+No `src/` Python package. No per-skill `scripts/` directory.
 
 ### 8.2 Distribution artifact
 
-`python scripts/build_plugin.py` must produce:
+`python packages/genie-skills/build.py` produces:
 
 ```text
-dist/databricks-genie-workbench-skills-<version>.zip
+dist/databricks-genie-skills-<version>.zip
 ```
 
 Zip contents:
@@ -520,68 +434,57 @@ Zip contents:
 ```text
 plugin.json
 README.md
+install.py
 skills/
   genie-space-create/
   genie-space-score/
   genie-space-optimize/
-  genie-workbench-parity/
-plugin/
-  src/genie_workbench_skills/
-  wheels/genie_workbench_skills-<version>-py3-none-any.whl
-install.py
 ```
+
+The bundle ships zero executable Python beyond the installer.
 
 ### 8.3 Plugin manifest
 
-`plugin.json` is project-defined metadata, not an external Agent Skills standard. It lets the installer, parity checks, and validation scripts reason about the bundle.
-
-Required fields:
-
 ```json
 {
-  "name": "databricks-genie-workbench-skills",
-  "version": "0.2.0",
-  "description": "Agent Skills bundle for creating, scoring, and optimizing Databricks Genie Spaces.",
-  "workbench_baseline_ref": "<tag-or-commit>",
+  "name": "databricks-genie-skills",
+  "version": "0.3.0",
+  "description": "Agent Skills bundle for Databricks Genie Spaces, backed by the Genie Workbench MCP server.",
   "skills": [
     "genie-space-create",
     "genie-space-score",
-    "genie-space-optimize",
-    "genie-workbench-parity"
+    "genie-space-optimize"
   ],
-  "python_package": "genie_workbench_skills",
   "default_install_scope": "user",
   "supports_workspace_install": true,
-  "shared_support_dir": ".assistant/plugins/databricks-genie-workbench-skills"
+  "mcp_server": {
+    "required": true,
+    "min_workbench_version": "<workbench-version>",
+    "endpoint_template": "https://<workbench-host>/mcp",
+    "auth": "oauth-passthrough",
+    "tool_namespace": "genie"
+  }
 }
 ```
 
+`min_workbench_version` is the only compatibility pin needed — there is no separate baseline ref because skills and MCP server ship from the same repo.
+
 ### 8.4 Install commands
 
-Local install from a cloned repo:
-
 ```bash
-python scripts/install_plugin.py --profile DEFAULT --scope user
-python scripts/install_plugin.py --profile DEFAULT --scope workspace
-```
-
-Install from a downloaded zip:
-
-```bash
-python install.py --profile DEFAULT --scope user
-python install.py --profile DEFAULT --scope workspace
+python install.py --profile DEFAULT --scope user --workbench-host <host>
+python install.py --profile DEFAULT --scope workspace --workbench-host <host>
 ```
 
 Installer responsibilities:
 
-1. Validate `plugin.json`.
-2. Validate all `SKILL.md` files.
-3. Resolve the target workspace path.
-4. Import skill folders into the selected skills directory.
-5. Import shared plugin code into a predictable plugin support directory.
-6. Preserve existing user-modified skill files by default.
-7. Support `--overwrite` for explicit upgrades.
-8. Write `install_result.json` locally and optionally to the workspace output folder.
+1. Validate `plugin.json` and every `SKILL.md`.
+2. Resolve target skills directory.
+3. Copy skill folders.
+4. Write `<skills>/genie-mcp.config.json` with the resolved Workbench MCP endpoint.
+5. Probe the MCP endpoint to confirm reachability and version compatibility (refuse if Workbench version < `min_workbench_version`).
+6. Preserve user-modified skill files unless `--overwrite`.
+7. Write `install_result.json` locally and optionally to the workspace output folder.
 
 Target workspace structure after user install:
 
@@ -590,446 +493,222 @@ Target workspace structure after user install:
   genie-space-create/
   genie-space-score/
   genie-space-optimize/
-  genie-workbench-parity/
-/Users/{username}/.assistant/plugins/databricks-genie-workbench-skills/
-  plugin.json
-  src/genie_workbench_skills/
-  wheels/
+  genie-mcp.config.json
 ```
 
-Target workspace structure after workspace install:
+### 8.5 MCP server module
+
+Lives in `backend/mcp/` inside the Workbench app:
 
 ```text
-Workspace/.assistant/skills/
-  genie-space-create/
-  genie-space-score/
-  genie-space-optimize/
-  genie-workbench-parity/
-Workspace/.assistant/plugins/databricks-genie-workbench-skills/
-  plugin.json
-  src/genie_workbench_skills/
-  wheels/
+backend/mcp/
+  __init__.py
+  server.py                # MCP protocol handler, tool / resource registry
+  auth.py                  # OAuth context bridge to existing app auth
+  approvals.py             # approval token issuance + verification
+  tools/
+    spaces.py              # list_spaces, get_space, get_serialized_space
+    create.py              # discover_uc_assets, inspect_table, profile_columns,
+                           # validate_space_plan, assemble_serialized_space,
+                           # validate_serialized_space, test_sql, create_genie_space
+    score.py               # score_space, score_all_spaces, get_space_findings,
+                           # render_score_report
+    optimize.py            # preflight_optimization, bootstrap_gso_job,
+                           # start_optimization_run, get_optimization_run,
+                           # get_optimization_changes, apply_optimization_result
+  resources/
+    spaces.py              # genie://spaces/{space_id}/serialized_space
+    runs.py                # genie://runs/{run_id}/optimization_report
 ```
 
-The installer must support path normalization because Databricks UI paths and CLI workspace paths may differ by environment. The implementation must verify by listing the target folder after import.
+Each tool is a thin function that calls existing Workbench services. No business logic is reimplemented in the MCP layer.
 
-### 8.5 How skills call shared assets
+## 9. MCP tool catalog
 
-Each skill script should be a thin wrapper that locates the shared support directory and imports the shared package.
+### 9.1 Space identity and state (`tools/spaces.py`)
 
-Example wrapper pattern:
+| Tool | Inputs | Output | Backed by |
+|---|---|---|---|
+| `list_spaces` | optional filter, `manage_only?` | array of `{space_id, title, owner, modified}` | `services/spaces.list_spaces` |
+| `get_space` | `space_id` | metadata + permissions summary | `services/spaces.get_space` |
+| `get_serialized_space` | `space_id` | full `serialized_space` JSON | Genie API via `services/genie_api` |
 
-```python
-# skills/genie-space-score/scripts/score_space.py
-from genie_workbench_skills.cli.score_space import main
+### 9.2 Create (`tools/create.py`)
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-```
+| Tool | Inputs | Output |
+|---|---|---|
+| `discover_uc_assets` | search text, filters | matched catalogs / schemas / tables / metric views |
+| `inspect_table` | three-level identifier | comments, columns, types, PII flags, sample-distinct values, date ranges, null rates |
+| `profile_columns` | identifier, columns | profiling stats only (used after agent narrows scope) |
+| `validate_space_plan` | plan JSON | normalized plan + warnings |
+| `assemble_serialized_space` | plan JSON | candidate `serialized_space` |
+| `validate_serialized_space` | `serialized_space` | errors, warnings, approval token if clean |
+| `test_sql` | sql, warehouse_id, optional params | execution status + small preview |
+| `create_genie_space` | title, description, parent_path, warehouse_id, `serialized_space`, approval_token | created space metadata + `space_id` |
 
-The shared package may be made importable by one of these mechanisms, in order of preference:
+### 9.3 Score (`tools/score.py`)
 
-1. Install the wheel into the active Python environment used by Genie Code.
-2. Add the plugin support directory to `PYTHONPATH` for script execution.
-3. Use a wrapper that prepends the support directory to `sys.path`.
+| Tool | Inputs | Output |
+|---|---|---|
+| `score_space` | `space_id` | score, score_percent, maturity, findings, next_steps, warnings |
+| `score_all_spaces` | optional filter, optional `manage_only=true` | list of score records |
+| `get_space_findings` | `space_id`, `run_id?` | full findings detail |
+| `render_score_report` | `score_run_id` | Markdown report |
 
-The first release should support options 2 and 3 because workspace users may not control the active Python environment.
+### 9.4 Optimize (`tools/optimize.py`)
 
-## 9. Shared code asset requirements
+| Tool | Inputs | Output |
+|---|---|---|
+| `preflight_optimization` | `space_id`, `mode?` | preflight report + selected mode |
+| `bootstrap_gso_job` | options, approval_token | job id + status |
+| `start_optimization_run` | `space_id`, `mode`, config | `run_id` |
+| `get_optimization_run` | `run_id` | run status + accuracy + accepted / rejected counts |
+| `get_optimization_changes` | `run_id` | staged change set + per-change rationale |
+| `apply_optimization_result` | `run_id`, accepted_change_ids, approval_token, `apply_mode` | applied diff + new space version |
 
-### 9.1 `auth.py`
+### 9.5 Resources
 
-Responsibilities:
+- `genie://spaces/{space_id}/serialized_space` — read-only fetch
+- `genie://spaces/{space_id}/score_report/latest` — most recent score Markdown
+- `genie://runs/{run_id}/optimization_report` — optimization Markdown
+- `genie://server_info` — Workbench app version, MCP server version, available tool list, transport
 
-- Create `WorkspaceClient()` using Databricks default authentication.
-- Allow explicit host/profile/token configuration only through standard Databricks mechanisms.
-- Detect when code is running in a Databricks notebook, Databricks workspace file context, or local environment.
-- Provide clear errors for missing credentials.
+Resources let the LLM pull bulky context on demand without consuming tool calls.
 
-### 9.2 `genie_api.py`
+### 9.6 Approval tokens
 
-Responsibilities:
+Tools that mutate live state (`create_genie_space`, `bootstrap_gso_job`, `apply_optimization_result`) require an approval token. Tokens are issued by `validate_serialized_space` (for create) or `get_optimization_changes` (for apply). They are short-lived (minutes), single-use, scoped to a specific space + payload hash, and verifiable server-side.
 
-- Wrap Genie REST API calls.
-- Provide typed helper functions:
-  - `list_spaces()`
-  - `get_space(space_id)`
-  - `get_serialized_space(space_id)`
-  - `create_space(title, description, parent_path, warehouse_id, serialized_space)`
-  - `update_space(space_id, serialized_space)`
-  - `start_conversation(space_id, content)`
-  - `get_generated_sql(space_id, conversation_id, message_id)`
-  - `create_eval_run(space_id, config)` when available.
-- Normalize API errors into actionable messages.
-
-### 9.3 `serialized_space.py`
-
-Responsibilities:
-
-- Generate valid 32-character lowercase hex IDs.
-- Clean configs:
-  - Wrap string fields as arrays where required.
-  - Remove nulls from arrays.
-  - Sort arrays by required sort keys.
-  - Deduplicate IDs.
-  - Deduplicate column configs.
-  - Normalize join spec relationship annotations.
-  - Remove empty SQL snippets.
-  - Enforce one text instruction.
-  - Validate size limits.
-- Produce validation errors and warnings separately.
-
-### 9.4 `uc_metadata.py`
-
-Responsibilities:
-
-- List accessible catalogs, schemas, tables, and metric views.
-- Search by table names, column names, comments, and synonyms.
-- Fetch table and column comments.
-- Produce metadata summaries for agent context.
-- Redact or flag likely PII and sensitive columns.
-
-### 9.5 `sql_warehouse.py`
-
-Responsibilities:
-
-- Discover eligible SQL warehouses.
-- Execute SQL with concurrency limits.
-- Substitute default parameter values safely for SQL validation.
-- Return compact result previews.
-- Detect syntax errors, missing permissions, missing tables, and empty result issues.
-
-### 9.6 `create_plan.py`
-
-Responsibilities:
-
-- Store a normalized plan model.
-- Convert plan sections into `serialized_space`.
-- Generate plan reports.
-- Validate all SQL artifacts before config assembly.
-
-### 9.7 `iq_score.py`
-
-Responsibilities:
-
-- Implement the deterministic score model.
-- Enrich descriptions from UC metadata.
-- Load optimization history from plugin outputs and optional GSO tables.
-- Return stable JSON output for tests.
-
-### 9.8 `space_update.py`
-
-Responsibilities:
-
-- Validate candidate update field paths.
-- Apply approved updates to local configs.
-- Render before/after diffs.
-- Re-fetch and apply approved updates to Databricks.
-- Retry stale config updates when safe.
-- Sanitize IDs and revalidate before PATCH.
-
-This module is shared infrastructure for create and optimization workflows. It is not exposed as a standalone readiness-remediation skill.
-
-### 9.9 `benchmark_eval.py`
-
-Responsibilities:
-
-- Read benchmark questions and expected SQL from `serialized_space`.
-- Ask Genie benchmark questions.
-- Retrieve generated SQL.
-- Execute generated SQL and expected SQL.
-- Compare result sets using deterministic comparison rules.
-- Support optional LLM judging when deterministic comparison is insufficient and the user permits it.
-
-### 9.10 `optimizer.py`
-
-Responsibilities:
-
-- Run lightweight optimization mode.
-- Provide interfaces for GSO parity mode.
-- Track benchmark-level results.
-- Compare expected and generated SQL results.
-- Cluster failures and generate candidate changes.
-- Enforce gate evaluation before accepting changes.
-
-### 9.11 `gso_bootstrap.py`
-
-Responsibilities:
-
-- Detect whether full GSO mode is installed.
-- Deploy or update the GSO Lakeflow job if the user requests full parity mode.
-- Create or validate the optimizer state schema.
-- Submit optimization runs.
-- Poll run status.
-- Fetch GSO outputs.
-
-### 9.12 `artifact_store.py` and `reporting.py`
-
-Responsibilities:
-
-- Write JSON, JSONL, Markdown, and compact logs to each output directory.
-- Maintain the top-level run index.
-- Render human-readable reports for score and optimization outputs.
-- Redact sensitive values before writing reports.
-
-### 9.13 `parity.py`
-
-Responsibilities:
-
-- Read and validate `upstream-feature-map.yaml`.
-- Compare mapped Workbench source files and docs to plugin skills and shared code.
-- Generate parity reports, changelog drafts, and implementation task lists.
-- Generate skeleton skill folders when a new Workbench capability meets the criteria for a new skill.
+The user-facing approval is the agent's confirmation prompt; the token is the cryptographic guard that prevents the agent from skipping the prompt. Tokens are not surfaced to the user and not part of the conversation transcript — the skill receives them as opaque strings from one tool and passes them to the next.
 
 ## 10. Artifact and history model
 
-Because this project does not use the Workbench app or Lakebase by default, it must persist useful artifacts in files. Optional Delta persistence may be added for teams.
+The system of record lives in Workbench's existing tables:
 
-Default artifact root:
+- `genie_skill_runs` — every MCP-driven run (skill invocation chain)
+- `genie_skill_scores` — score outputs
+- `genie_skill_optimization_runs` — optimization runs + accuracy
+- `genie_skill_change_events` — applied changes with before / after diffs
 
-```text
-/Workspace/Users/{username}/.genie-workbench-skills/outputs/
-```
+These are the same tables Workbench's UI surface reads and writes; agent runs and UI runs are visible to each other.
 
-Local development artifact root:
+User-facing artifacts (Markdown reports, plan JSONs) are written by the agent into the user's workspace folder via Genie Code's filesystem tools, using paths suggested by MCP tools. Local artifacts are convenience copies for human review, not the system of record.
 
-```text
-./outputs/
-```
-
-Each run must write machine-readable JSON plus a human-readable Markdown report.
-
-Required top-level index:
+Default agent artifact root:
 
 ```text
-outputs/index.jsonl
+/Workspace/Users/{username}/.genie-skills/outputs/
 ```
 
-Each record:
-
-```json
-{
-  "timestamp": "2026-05-04T00:00:00Z",
-  "skill": "genie-space-score",
-  "space_id": "...",
-  "run_id": "...",
-  "status": "success",
-  "artifact_dir": "outputs/<space-id>/...",
-  "summary": "Score 9/12, Ready to Optimize"
-}
-```
-
-Optional team persistence:
-
-- `catalog.schema.genie_skill_runs`
-- `catalog.schema.genie_skill_scores`
-- `catalog.schema.genie_skill_optimization_runs`
-- `catalog.schema.genie_skill_change_events`
-
-Delta persistence must be opt-in and created only after the user confirms the target catalog and schema.
+Each MCP run writes a record to Lakebase. The agent may additionally maintain a local `outputs/index.jsonl` for the user's own browsing, but this is not authoritative.
 
 ## 11. Permissions and identity model
 
-### 11.1 Default user-mode identity
+### 11.1 User identity (default)
 
-For create, score, and lightweight optimization workflows, code runs as the current Genie Code user through Databricks default authentication. This means:
+OAuth pass-through. The user authenticates to the Workbench Databricks App. Genie Code's MCP client reuses the access token. The MCP server propagates the user's identity to:
 
-- Unity Catalog discovery respects the user’s permissions.
-- SQL validation runs with the user’s warehouse and data permissions.
-- Genie Space create and update operations are attributed to the user’s identity.
+- Unity Catalog discovery.
+- SQL warehouse execution.
+- Genie create / update operations.
+- Lakebase reads and writes that are user-scoped.
 
-### 11.2 Optional job identity for optimization
+### 11.2 Service-principal identity for jobs
 
-Full GSO parity mode may need a Lakeflow Job. The job can run as:
-
-- The current user.
-- A configured service principal.
-
-The bundle must not create or use a service principal silently. If a service principal is configured, the bundle must preflight:
+Full GSO mode requires a Lakeflow Job that runs as either the user or a configured service principal. Configuration of the SP is done through Workbench app settings (admin path), not silently inferred. The MCP `bootstrap_gso_job` tool surfaces the SP requirement and refuses to create a job with an unconfigured identity. Preflight checks remain:
 
 - The service principal can manage the target Genie Space if it will apply changes.
 - The service principal can use the SQL warehouse.
 - The service principal can read referenced schemas.
 - The service principal can write optimizer state tables.
 
-### 11.3 Approval boundaries
+### 11.3 Approval boundaries (server-enforced)
 
-The bundle must require explicit approval before:
+The MCP server requires explicit user-issued approval tokens before:
 
 - Creating a Genie Space.
 - Updating a live Genie Space.
-- Deploying or updating a GSO job.
-- Creating a UC schema or Delta tables.
-- Running a long or potentially expensive optimization job.
+- Bootstrapping or updating the GSO job.
+- Creating UC schemas or Delta tables outside the Workbench-managed namespace.
+- Running long or expensive optimization jobs.
 - Applying optimized config to production spaces.
+
+Skills are responsible for prompting the user; the MCP server is responsible for refusing if no token is present.
 
 ## 12. Skill authoring standards
 
-Every `SKILL.md` must include:
+Every `SKILL.md` includes:
 
-1. Agent Skills frontmatter:
+1. Frontmatter:
 
 ```yaml
 ---
 name: genie-space-score
 description: Score, scan, and assess Databricks Genie Spaces for readiness using the Genie Workbench quality rubric. Use when the user asks to score a Genie Space, check readiness, identify missing metadata, or determine whether a space is ready to optimize.
 license: Databricks License
-compatibility: Designed for Databricks Genie Code Agent mode. Requires Databricks workspace access and a SQL warehouse for SQL validation workflows.
+compatibility: Designed for Databricks Genie Code Agent mode. Requires the Databricks Genie Workbench MCP server.
 metadata:
-  plugin: databricks-genie-workbench-skills
+  bundle: databricks-genie-skills
   workbench_feature: iq-scanner
-  workbench_baseline_ref: "<tag-or-commit>"
+  mcp_tool_namespace: genie
 ---
 ```
 
-2. A concise workflow overview.
-3. Exact scripts to run for mechanical tasks.
-4. Required inputs.
-5. Required outputs.
-6. Human approval points.
-7. Failure handling.
-8. References to bundled files using relative paths from the skill root.
+2. Workflow overview.
+3. Exact MCP tools to invoke and the order of invocation.
+4. Required inputs for each tool.
+5. Required outputs and how to render them.
+6. Human approval points (which tools issue tokens, which require them).
+7. Failure handling (server error categories and recommended retries).
+8. References to bundled docs via relative paths.
 9. Examples of user requests.
 
-Do not overload one skill with all context. Keep each skill focused. Put long schema references, prompts, and examples in `references/` or `assets/`. Put shared implementation in `src/genie_workbench_skills/`.
+Skills must not embed business logic. If a skill's instructions describe "how to compute X," that is a hint to add or extend an MCP tool, not to inline the computation.
 
-## 13. Workbench parity and update process
+## 13. Compatibility versioning
 
-### 13.1 Upstream feature map
+Skills and MCP server ship from the same repo. Versioning is governed by:
 
-The repo must include:
+- `plugin.json` `version` — bundle version.
+- `plugin.json` `mcp_server.min_workbench_version` — minimum Workbench app version that exposes all MCP tools the bundle requires.
+- Workbench app exposes its version through the MCP `server_info` resource.
 
-```text
-skills/genie-workbench-parity/references/upstream-feature-map.yaml
-```
+The installer probes the configured Workbench host and refuses to install if the app version is below `min_workbench_version`. The MCP server, in turn, advertises tool list and schemas through standard MCP discovery so older bundles continue to function as long as they only call tools that still exist.
 
-Initial map:
+Tool deprecations follow standard MCP practice: mark deprecated, retain for one minor cycle, remove. Skill bundles must update before relying on a replacement.
 
-```yaml
-workbench_repo: databricks-solutions/databricks-genie-workbench
-workbench_baseline_ref: "<tag-or-commit>"
-features:
-  create_agent:
-    workbench_docs:
-      - docs/04-create-agent.md
-    workbench_sources:
-      - backend/services/create_agent.py
-      - backend/services/create_agent_tools.py
-      - backend/services/plan_builder.py
-      - backend/genie_creator.py
-      - backend/prompts_create/
-    plugin_skills:
-      - genie-space-create
-    plugin_sources:
-      - src/genie_workbench_skills/create_plan.py
-      - src/genie_workbench_skills/serialized_space.py
-      - src/genie_workbench_skills/uc_metadata.py
-      - src/genie_workbench_skills/sql_warehouse.py
-  iq_scanner:
-    workbench_docs:
-      - docs/05-iq-scanner.md
-    workbench_sources:
-      - backend/services/scanner.py
-    plugin_skills:
-      - genie-space-score
-    plugin_sources:
-      - src/genie_workbench_skills/iq_score.py
-      - src/genie_workbench_skills/reporting.py
-  auto_optimize:
-    workbench_docs:
-      - docs/07-auto-optimize.md
-    workbench_sources:
-      - backend/routers/auto_optimize.py
-      - backend/services/gso_lakebase.py
-      - packages/genie-space-optimizer/
-      - databricks.yml
-    plugin_skills:
-      - genie-space-optimize
-    plugin_sources:
-      - src/genie_workbench_skills/benchmark_eval.py
-      - src/genie_workbench_skills/optimizer.py
-      - src/genie_workbench_skills/gso_bootstrap.py
-      - src/genie_workbench_skills/space_update.py
-excluded_upstream_features:
-  deprecated_readiness_remediation:
-    reason: "Expected to be deprecated upstream; not exposed as a standalone skill. Shared update helpers remain available for approved optimization changes."
-```
-
-### 13.2 Update workflow
-
-When Workbench adds or changes a feature:
-
-1. Run `scripts/sync_from_workbench.py --workbench-repo <path-or-url> --ref <tag-or-commit>`.
-2. Run `@genie-workbench-parity` or `scripts/check_workbench_parity.py`.
-3. Review generated parity report.
-4. Decide one of:
-   - Update existing skill instructions.
-   - Update shared code.
-   - Add a new skill.
-   - Mark feature as app-only.
-   - Mark feature as excluded.
-5. Add or update tests.
-6. Update `plugin.json` version and `upstream-feature-map.yaml`.
-7. Run validation and package build.
-
-### 13.3 Feature addition criteria
-
-Add a new skill when the feature:
-
-- Has a distinct user intent that Genie Code can recognize.
-- Needs a different workflow or approval boundary.
-- Would make an existing skill too broad.
-- Uses a different set of scripts or references.
-
-Update an existing skill when the feature is a small enhancement to an existing workflow.
-
-Update shared code when the feature affects multiple skills or is a reusable mechanism rather than a user-facing workflow.
-
-Mark a Workbench feature as app-only when it depends on UI state, dashboards, continuous polling views, app-specific persistence, or Lakebase-backed collaboration views that are not useful in a Genie Code workflow.
-
-## 14. Testing requirements
+## 14. Testing
 
 ### 14.1 Static validation
 
-- Validate all `SKILL.md` files against the Agent Skills spec.
-- Validate plugin manifest schema.
-- Validate no skill description exceeds frontmatter limits.
-- Validate all referenced files exist.
-- Validate all scripts have CLI help and actionable error messages.
-- Validate no deprecated standalone remediation skill folder exists.
+- Validate every `SKILL.md` against the Agent Skills spec.
+- Validate `plugin.json` schema.
+- Validate that every MCP tool referenced in skill instructions exists in the live tool registry of the targeted Workbench version (a build-time compatibility check).
+- Validate no skill embeds business logic that should be a tool.
+- Validate no `genie-workbench-parity` skill folder is reintroduced.
 
-### 14.2 Unit tests
+### 14.2 MCP server unit tests
 
-Required coverage:
+Tests live alongside `backend/mcp/`:
 
-- ID generation.
-- Config cleaning and sorting.
-- Serialized space validation.
-- IQ scoring on fixture configs.
-- UC enrichment merge behavior.
-- Candidate update field path parsing.
-- Update apply/diff behavior.
-- SQL parameter substitution.
-- Benchmark result comparison.
-- Artifact store writes.
+- Tool input / output schema fidelity.
+- Approval token issuance, expiry, and payload-hash binding.
+- Auth context propagation to underlying services.
+- Error normalization (Genie API → MCP error categories).
+- Apply path: re-fetch + merge + diff + sanitize + revalidate.
 
-### 14.3 Golden tests against Workbench fixtures
+### 14.3 Backend service unit tests (existing)
 
-For each fixture space:
+Workbench's existing tests for scanner, optimizer, `serialized_space`, and `space_update` remain authoritative. The MCP layer reuses them.
 
-1. Run Workbench scanner or use recorded Workbench scanner output.
-2. Run plugin scorer.
-3. Assert score, maturity, checks, findings, and warnings match or document intentional divergence.
+### 14.4 Integration tests (opt-in)
 
-### 14.4 Integration tests
-
-Integration tests run against a real Databricks workspace and must be opt-in.
-
-Required tests:
+Run against a real Workbench deployment connected to a real Databricks workspace:
 
 - Install bundle to user skills path.
+- MCP probe returns tool list and matches the bundle's expectations.
+- Score an existing space via skill → MCP → service.
 - Create a test Genie Space from a small known schema.
-- Score the created space.
 - Run lightweight benchmark evaluation.
 - Stage an optimization change without applying it.
 - Apply a harmless approved optimization change to a disposable test space.
@@ -1037,10 +716,11 @@ Required tests:
 
 ### 14.5 Safety tests
 
-- Create refuses to run without approval.
-- Live updates refuse to run without approval.
-- PII columns are flagged in create workflow.
-- Invalid serialized configs are not submitted to the API.
+- `create_genie_space` refuses without a valid approval token.
+- `apply_optimization_result` refuses without a valid approval token.
+- Tokens are bound to one payload hash; re-use is rejected.
+- PII flags surface in `inspect_table` results.
+- Invalid `serialized_space` is not accepted by `validate_serialized_space`.
 - Optimizer does not apply accuracy-regressing changes.
 - Service principal configuration cannot be silently inferred or created.
 
@@ -1048,166 +728,125 @@ Required tests:
 
 ### 15.1 Logging
 
-All scripts must log to stderr for console visibility and write structured JSON logs to each artifact directory.
+MCP tool calls log to Workbench's existing logging stack with:
+
+- User identity.
+- Tool name + input hash (PII-redacted).
+- Outcome and duration.
+- Approval token issuance and consumption events.
 
 ### 15.2 Error handling
 
-Errors must include:
+MCP errors include:
 
-- What failed.
-- Which Databricks object was involved.
+- Error category (`auth`, `validation`, `permission`, `not_found`, `conflict`, `transient`, `internal`).
+- Object involved (space_id, run_id, table identifier).
 - Whether retry is safe.
-- Which permission or configuration is likely missing.
-- The next concrete command or action.
+- Suggested next action for the agent.
 
 ### 15.3 Dependency management
 
-- Use Python 3.11+.
-- Use `uv` for local development and lockfile management.
-- Pin exact runtime dependencies.
-- Keep generated wheels small enough for workspace import.
-- Do not require Node.js.
-
-Minimum Python dependencies:
-
-- `databricks-sdk`
-- `pydantic`
-- `pandas`
-- `sqlglot` for SQL normalization/comparison where useful
-- `mlflow` optional for optimization tracing
+MCP server dependencies are part of Workbench's existing `pyproject.toml` (FastAPI, databricks-sdk, MCP server library, etc.). The skills bundle has minimal Python dependencies — only the installer needs anything beyond the standard library.
 
 ### 15.4 Security
 
-- Do not store tokens in plugin artifacts.
-- Do not print full query results by default.
-- Redact likely secrets and sensitive values from reports.
-- Keep data profiling samples small and purpose-specific.
-- Require explicit approval for live changes.
-- Prefer user identity for interactive operations.
-- Treat service principal setup as an explicit advanced configuration.
-- Treat bundled executable scripts as privileged assets; validate source provenance before installation.
+- OAuth tokens are never persisted in skill artifacts.
+- MCP responses redact secrets and known-sensitive fields.
+- Profiling samples are size-limited.
+- Approval tokens are short-lived and bound to payload hashes.
+- The skills bundle ships zero executable Python beyond the installer; tools, validators, and apply logic only run server-side.
 
 ## 16. Milestones
 
-### Milestone 1 — Skill shell and installer
+### Milestone 1 — MCP server skeleton
 
 Deliverables:
 
-- Repo layout.
-- `plugin.json`.
-- Four skill folders with valid `SKILL.md` files.
-- Installer for user and workspace scopes.
-- Skill validation tests.
+- `backend/mcp/server.py` with protocol handler.
+- Auth bridge to existing app auth.
+- One read-only tool (`get_serialized_space`) end-to-end.
+- MCP discovery returns tool list.
+- `server_info` resource.
 
-Acceptance criteria:
+Acceptance: Genie Code can connect to the MCP endpoint and call `get_serialized_space`.
 
-- Bundle installs to a user skills folder.
-- Genie Code can discover the skill descriptions in Agent mode after install.
-- `scripts/validate_plugin.py` passes.
-
-### Milestone 2 — Shared core package
+### Milestone 2 — Skills bundle scaffold
 
 Deliverables:
 
-- `auth.py`, `genie_api.py`, `serialized_space.py`, `artifact_store.py`, `reporting.py`, and `space_update.py`.
-- Thin wrapper scripts for each skill.
-- Shared import path strategy for workspace execution.
+- `packages/genie-skills/` with `plugin.json`, three skill folders, installer, builder.
+- Static validation tests.
+- `genie-mcp.config.json` written by installer.
 
-Acceptance criteria:
+Acceptance: Bundle installs to a user skills folder; Genie Code discovers skill descriptions; installer refuses on version mismatch.
 
-- Skill scripts can import and run shared code from the installed support directory.
-- Serialized space validation works on fixture configs.
-- Artifact writes are deterministic and indexed.
-
-### Milestone 3 — Score parity
+### Milestone 3 — Score path
 
 Deliverables:
 
-- `src/genie_workbench_skills/iq_score.py`.
-- `genie-space-score` scripts and reports.
-- Fixture tests against Workbench scanner outputs.
+- MCP tools: `list_spaces`, `get_space`, `score_space`, `score_all_spaces`, `get_space_findings`, `render_score_report`.
+- `genie-space-score` `SKILL.md` and references.
+- Resource: `genie://spaces/{space_id}/score_report/latest`.
 
-Acceptance criteria:
+Acceptance: User can score a space end-to-end through Genie Code with output identical to Workbench's UI scanner.
 
-- Score output matches Workbench scanner for fixtures or documents intentional divergences.
-- A real workspace integration test can score an existing space.
-
-### Milestone 4 — Create workflow
+### Milestone 4 — Create path
 
 Deliverables:
 
-- `create_plan.py`, `uc_metadata.py`, `sql_warehouse.py`, and create skill templates.
-- SQL validation and config validation.
+- MCP tools: `discover_uc_assets`, `inspect_table`, `profile_columns`, `validate_space_plan`, `assemble_serialized_space`, `validate_serialized_space`, `test_sql`, `create_genie_space`.
+- Approval token issuance bound to validation.
+- `genie-space-create` `SKILL.md` and references.
 
-Acceptance criteria:
+Acceptance: User can create a valid Genie Space from selected UC tables. Generated config passes validation before create. Output artifacts written.
 
-- A user can create a valid Genie Space from selected UC tables without deploying an app.
-- The generated config passes validation before create.
-- Output artifacts are written.
-
-### Milestone 5 — Lightweight optimization
+### Milestone 5 — Lightweight optimization path
 
 Deliverables:
 
-- `benchmark_eval.py`.
-- `optimizer.py` lightweight mode.
-- Baseline benchmark run.
-- Failure clustering.
-- Candidate change generation.
-- Gate evaluation.
-- Optimization report.
+- MCP tools: `preflight_optimization`, `start_optimization_run` (in-app mode), `get_optimization_run`, `get_optimization_changes`, `apply_optimization_result`.
+- Approval token bound to staged change set.
+- `genie-space-optimize` `SKILL.md` and references.
 
-Acceptance criteria:
+Acceptance: User can run baseline + lightweight optimization; apply requires approval token; regression gates enforced server-side.
 
-- A user can measure baseline accuracy and receive an optimization change plan.
-- Regression gates prevent harmful changes.
-- Live application of changes requires approval.
-
-### Milestone 6 — Full GSO parity mode
+### Milestone 6 — Full GSO mode
 
 Deliverables:
 
-- `gso_bootstrap.py`.
-- Vendored, submoduled, or dependency-based GSO engine integration.
-- Job bootstrap and trigger scripts.
-- GSO result ingestion.
+- MCP tool: `bootstrap_gso_job`.
+- Mode selection inside `start_optimization_run`.
+- Lakeflow job ingestion into MCP run state.
 
-Acceptance criteria:
+Acceptance: User can bootstrap and trigger Workbench-style GSO from Genie Code. The optimization report shows baseline, final accuracy, accepted changes, and rejected changes.
 
-- A user can bootstrap and trigger the Workbench-style optimization job without deploying the Workbench app.
-- The optimization report shows baseline, final accuracy, accepted changes, and rejected changes.
-
-### Milestone 7 — Workbench update workflow
+### Milestone 7 — Compatibility versioning and release
 
 Deliverables:
 
-- `genie-workbench-parity` working skill.
-- Feature map.
-- Parity diff script.
-- Generated skill-stub workflow.
+- `min_workbench_version` enforcement in installer.
+- MCP `server_info` resource.
+- Bundle release flow as part of Workbench's release pipeline.
 
-Acceptance criteria:
-
-- Maintainers can compare against a new Workbench release and generate a clear update report.
-- Deprecated or excluded upstream capabilities are not reintroduced accidentally.
+Acceptance: A user installing the bundle against an older Workbench app receives an actionable error before any tool call. Bundle release artifacts are produced alongside Workbench releases.
 
 ## 17. Open decisions
 
-1. Full GSO parity mode should either vendor the Workbench GSO package, use it as a git submodule, or declare it as an external dependency. Recommendation: use a git submodule or vendored snapshot with explicit Workbench baseline metadata so the bundle can be installed without cloning Workbench separately.
-2. Workspace install path normalization needs validation in target Databricks environments because Databricks docs describe workspace skills as `Workspace/.assistant/skills/`, while CLI workspace APIs may represent paths differently.
-3. Decide whether optional Delta persistence should be in MVP or deferred until after score, create, and lightweight optimization are stable.
-4. Decide how much of Workbench’s MLflow tracing should be ported. Recommendation: optional in MVP, required for full GSO parity.
-5. Decide whether native Genie evaluation APIs should remain inside `genie-space-optimize` or become a separate skill if the API supports a distinct user workflow.
-6. Decide whether to add a `genie-space-workbench` coordinator skill after MVP. Recommendation: do not add it initially; add it only if user testing shows that skill selection is confusing.
+1. **MCP transport details.** HTTP/SSE is the assumed transport (standard for app-hosted MCP). Confirm Genie Code's supported transports and authentication modes before final design.
+2. **UI-disabled deploy path.** Decide whether Workbench should ship a documented UI-disabled deploy mode, or whether agent-only deployments are an org-level configuration concern not officially supported.
+3. **Resource granularity.** Decide which Markdown reports are exposed as MCP resources (read-only, agent-pulled) versus returned inline by tools. Default for MVP: tools return inline; resources are added when context size becomes a problem.
+4. **Native Genie evaluation API surface.** When Databricks ships native eval APIs, decide whether they replace lightweight in-app eval or augment it. Currently treated as an internal optimization detail.
+5. **Approval token UX.** Recommendation: tokens stay invisible to the user — the user approves a human-readable diff; the token plumbing is hidden from the conversation.
+6. **Multi-tenant Workbench deployments.** If a single Workbench instance serves multiple workspaces, decide whether `server_info` discloses workspace boundaries or whether each workspace runs its own deployment.
 
-## 18. Reference documents to read before implementation
+## 18. Reference documents
 
 - Databricks Genie Code Agent Skills: https://docs.databricks.com/aws/en/genie-code/skills
 - Agent Skills specification: https://agentskills.io/specification
+- Model Context Protocol specification: https://modelcontextprotocol.io/specification
 - Databricks Genie API and `serialized_space` schema: https://docs.databricks.com/aws/en/genie/conversation-api
 - Databricks Genie best practices: https://docs.databricks.com/aws/en/genie/best-practices
-- Databricks CLI Genie command group: https://docs.databricks.com/aws/en/dev-tools/cli/reference/genie-commands
-- Genie Workbench repo: https://github.com/databricks-solutions/databricks-genie-workbench
+- Genie Workbench repo (this project's host): https://github.com/databricks-solutions/databricks-genie-workbench
 - Genie Workbench create agent docs: `docs/04-create-agent.md`
 - Genie Workbench IQ scanner docs: `docs/05-iq-scanner.md`
 - Genie Workbench Auto-Optimize docs: `docs/07-auto-optimize.md`
