@@ -1,2 +1,2 @@
-# genie-workbench-plugin
-Databricks Genie Workbench as a plugin of Agent Skills.
+# genie-code-plugin
+Extra plugins for Databricks Genie Code.
