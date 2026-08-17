@@ -147,12 +147,12 @@ In the App configuration page:
 
 ### 5. Deploy
 
-For deployment from this Git repository, use `genie-code/mcp-genie-agent-versioning` as
+For deployment from this Git repository, use `mcp-genie-agent-versioning` as
 the source directory (relative to the repository root):
 
 ```bash
 databricks apps deploy mcp-genie-agent-versioning \
-  --json '{"git_source":{"branch":"main","source_code_path":"genie-code/mcp-genie-agent-versioning"}}'
+  --json '{"git_source":{"branch":"main","source_code_path":"mcp-genie-agent-versioning"}}'
 ```
 
 Alternatively, upload a local checkout through the Databricks workspace. Run these
