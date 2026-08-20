@@ -126,8 +126,12 @@ Key references:
   Genie **Code** (Assistant) usage? The docs name this "Genie Code system table
   reference" — it may not include Genie Agents/Spaces conversations, which would mean
   the REST API is the only source for those.
-- Is there a programmatic way to list all Genie Spaces/Agents in a workspace? (So the
-  MCP can discover what to crawl.)
+- ~~Is there a programmatic way to list all Genie Spaces/Agents in a workspace? (So the
+  MCP can discover what to crawl.)~~ → **Yes.** `GET /api/2.0/genie/spaces` is paginated
+  (`page_token` → `next_page_token`) and returns `space_id`, `title`, and `update_time`
+  per Agent; full configs need one `GET .../{space_id}?include_serialized_space=true` per
+  Agent. The research lives in [idea 5](./05-impact-analysis.md), which builds its
+  crawl-and-index loop on exactly this.
 - What is the exact join key between a Genie conversation and a `system.billing.usage`
   record? Query Tags may be the bridge, but the field name and availability need
   confirmation.
