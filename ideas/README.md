@@ -13,13 +13,15 @@ skills, native Genie features, or the existing [`mcp-genie-agent-versioning`](..
 | [3](./03-agent-diff.md) | Agent Comparison & Diff | Tool in `mcp-genie-agent-versioning` | Designed |
 | [4](./04-agent-migration.md) | Agent Migration & Portability | Genie Code workspace skill | Designed |
 | [5](./05-impact-analysis.md) | Multi-Agent Impact Analysis (UC Lineage) | MCP | Designed |
-| [6](./06-slash-commands.md) | Custom Slash Commands | Extension | Draft |
+| [6](./06-slash-commands.md) | Custom Slash Commands | Genie Code workspace skills | Designed |
 
 ## Prioritization Notes
 
 - Items 1, 2, and 5 are candidates for MCP servers (like the existing `mcp-genie-agent-versioning`).
 - Item 3 folds into `mcp-genie-agent-versioning` as an additional tool; item 4 resolves to a
   Genie Code workspace skill with an executable script rather than an MCP.
-- Item 6 is a candidate for a non-MCP Genie Code extension.
+- Item 6 resolves the same way: Genie Code's slash commands are not user-extensible, so the
+  command library becomes workspace skills (`@`-invoked, script-backed) plus scheduled tasks
+  for recurring runs.
 - Several directions (analytics + impact analysis) could share a common "Agent index" that
   periodically crawls the workspace and materializes metadata to UC.
