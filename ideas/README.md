@@ -10,7 +10,7 @@ skills, native Genie features, or the existing [`mcp-genie-agent-versioning`](..
 |---|---|---|---|
 | [1](./01-multi-turn-eval.md) | Multi-Turn Conversation Evaluation | MCP | Designed |
 | [2](./02-workspace-usage-analytics.md) | Workspace-Wide Usage Analytics | MCP | Exploring |
-| [3](./03-agent-diff.md) | Agent Comparison & Diff | Tool in `mcp-genie-agent-versioning` | Designed |
+| [3](./03-agent-diff.md) | Agent Comparison & Diff | Tool in `mcp-genie-agent-versioning` | Implementation-ready |
 | [4](./04-agent-migration.md) | Agent Migration & Portability | Genie Code workspace skill | Designed |
 | [5](./05-impact-analysis.md) | Multi-Agent Impact Analysis (UC Lineage) | MCP | Designed |
 

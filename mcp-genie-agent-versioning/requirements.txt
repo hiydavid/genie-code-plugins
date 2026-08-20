@@ -1,5 +1,8 @@
 # Runtime dependencies installed by Databricks Apps.
-# The MCP uses only statement execution; it never calls the Genie API.
+# The SDK is used for SQL statement execution (version persistence) and for raw
+# REST calls to the Genie spaces API via api_client.do (live read on save,
+# etag-guarded update on restore), both as the calling user through OBO
+# (`sql` and `genie` scopes, as declared in app.yaml).
 anyio>=4
 databricks-sdk>=0.118.0
 fastapi>=0.115.12

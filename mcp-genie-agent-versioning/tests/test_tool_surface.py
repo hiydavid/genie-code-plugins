@@ -15,7 +15,8 @@ from server.tools import register_tools
 
 def _registered_tools(server: FastMCP):
     # FastMCP 3.x exposes this runtime API, but its published type surface omits it.
-    return asyncio.run(cast(Any, server).get_tools())
+    tools = asyncio.run(cast(Any, server).list_tools())
+    return {tool.name: tool for tool in tools}
 
 
 def test_exact_v2_tool_surface(settings):
