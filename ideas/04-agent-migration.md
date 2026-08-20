@@ -1,6 +1,6 @@
 # 4. Agent Migration & Portability
 
-**Plugin:** `genie-agent-migrate` (Genie Code skill + deterministic CLI utility — not an MCP)
+**Plugin:** `genie-agent-migrate` (Genie Code workspace skill — not an MCP)
 
 DABs already supports Genie Agent resources, so Agent definitions can be declared as code and
 deployed across environments. The original open question was: what migration scenarios are
@@ -9,8 +9,26 @@ still painful enough that Genie Code + a plugin would meaningfully help?
 **Answer, after checking current platform coverage:** the export/deploy/drift loop is now
 well covered natively. The remaining gap is narrower and sharper — **environment
 parameterization of the `serialized_space` payload** — and it is a file-transformation
-problem, not an API problem. So this idea stops being a standalone MCP and becomes a skill
-plus a deterministic utility.
+problem, not an API problem. So this idea stops being a standalone MCP and becomes a
+workspace skill with an executable script.
+
+## Genie Code's operating model (design constraints)
+
+Genie Code is a **workspace-resident** agent, not a local CLI agent on a laptop. From the
+[agent skills docs](https://docs.databricks.com/aws/en/genie-code/skills):
+
+- Skills live as workspace files: `Workspace/.assistant/skills/` (workspace-wide) or
+  `/Users/{username}/.assistant/skills/` (personal). Installation is copying a folder —
+  there is no `pip install` step on the consumer side.
+- Skills may ship **executable scripts** (`scripts/*.py`, `*.sh`) that Genie Code runs on
+  demand, plus reference docs.
+- Everything Genie Code touches is a workspace file: the bundle lives in a **workspace Git
+  folder** (repo), and Genie Code drives Databricks CLI workflows through its built-in
+  `databricks-core` / `databricks-dabs` skills.
+
+Consequences for this design: the utility must be a dependency-light script inside the
+skill folder (not a packaged CLI), all paths are repo-relative workspace files, and the
+in-chat review artifact must be a printed change report — not a local `git diff`.
 
 ## What the platform already covers (research findings)
 
@@ -69,20 +87,23 @@ Two traps make a naive find-and-replace fail:
 Plus the context-size concern this repo already cares about: an Agent with hundreds of
 data sources has a payload that should not be manually edited through model context.
 
-## Decision: a skill + deterministic utility, not an MCP
+## Decision: a workspace skill, not an MCP
 
-Mirrors the reasoning in [idea 3](./03-agent-diff.md):
-
-- **The transformation is offline and deterministic.** No Genie API call, no auth, no OBO,
-  no UC. It runs in any Git checkout (local or workspace repo) and is unit-testable.
-- **A standalone MCP would re-create plumbing for nothing.** Its only value-add over the
-  CLI is a file rewrite it could reach less conveniently than Genie Code itself can.
-- **Same "keep payloads out of model context" philosophy.** Genie Code orchestrates and
-  runs the utility; the `serialized_space` never round-trips through the model. The
-  utility prints a compact report instead of the payload.
+- **The transform is a pure function over workspace files.** No Genie API call, no auth,
+  no OBO, no UC. An MCP server would mean a deployed App, scopes, and OBO plumbing — all
+  overhead for a file rewrite that Genie Code can execute directly from a skill script.
+  Zero server deployment: drop the folder in `.assistant/skills/`.
+- **Same "keep payloads out of model context" philosophy** as
+  [`mcp-genie-agent-versioning`](../mcp-genie-agent-versioning/): Genie Code orchestrates
+  and executes the script; `serialized_space` never round-trips through the model. The
+  script prints a compact change report instead of the payload. The skill's core job is
+  to stop Genie Code from attempting this edit by hand — the re-sort and invariant rules
+  must not be improvised by an LLM per run.
 - **Cross-workspace promotion is file-mediated anyway.** Export → Git → deploy needs no
   cross-workspace identity; OBO tokens are workspace-scoped, so an App is the wrong shape
   for that hop regardless.
+- Mirrors the reasoning in [idea 3](./03-agent-diff.md): don't build server plumbing for
+  work that is already local to where the agent lives.
 
 ## v1 design
 
@@ -125,7 +146,7 @@ per-target `${var.*}` substitutions — only the JSON payload is rendered.
 ### Multi-target render pattern
 
 The committed `src/genie/sales.geniespace.json` is the **source-environment** canonical
-file. `genie-agent-migrate render --target prod` writes
+file. `scripts/migrate.py render --target prod` writes
 `src/genie/targets/prod/sales.geniespace.json`, and per-target YAML overrides pick the
 right `file_path`:
 
@@ -140,35 +161,54 @@ targets:
           file_path: ../src/genie/targets/prod/sales.geniespace.json
 ```
 
-Rendered files are deterministic, so teams can either commit them (lockfile style,
-reviewable diffs) or gitignore them (always fresh). Committing is recommended: the git
-diff of a promotion then shows *exactly* which identifiers changed and nothing else.
+Rendered files are deterministic, so teams can either commit them (lockfile style) or
+gitignore them (always fresh). Committing is recommended: the PR on the workspace Git
+folder then shows *exactly* which identifiers changed and nothing else — the in-chat
+review artifact is the change report, the PR diff is the durable record.
 
 ### End-to-end promotion flow
 
 ```
 1. EXPORT (native)   databricks bundle generate genie-space --existing-id <dev-id> --key sales
-2. RENDER            genie-agent-migrate render --target staging
-3. REVIEW            git diff of the rendered file (identifiers only; ids/structure unchanged)
+2. RENDER            python scripts/migrate.py render --target staging
+3. REVIEW            read the script's change report (identifiers only; ids/structure
+                     unchanged); for repo-based teams the PR on the Git folder is the
+                     durable second review
 4. VALIDATE (native) databricks bundle validate --strict --target staging
 5. DEPLOY (native)   databricks bundle deploy --target staging
 6. BIND (first time) databricks bundle deployment bind sales <staging-space-id>
 ```
 
-Genie Code drives steps 1–6; the utility owns step 2.
+Genie Code drives steps 1–6; the skill script owns step 2.
 
-### Utility commands
+### Packaging & execution model
+
+The utility ships **inside the skill folder** as an executable script — the delivery
+mechanism Genie Code natively supports:
+
+```
+Workspace/.assistant/skills/genie-agent-migrate/
+├── SKILL.md            # when to run the promotion flow + safety rules
+├── reference.md        # serialized_space rules, mapping precedence, failure playbook
+└── scripts/
+    └── migrate.py      # stdlib-only + PyYAML (present on Databricks runtimes)
+```
+
+Genie Code runs `python scripts/migrate.py render --target staging` against the bundle
+repo (a workspace Git folder); all paths are repo-relative workspace files. The `SKILL.md`
+encodes the safety rules: always validate before deploy, never hand-edit identifiers in
+the JSON, review prose flags before promoting.
 
 | Command | Purpose |
 |---|---|
-| `genie-agent-migrate render --target <t>` | Emit the remapped, re-sorted, validated `*.geniespace.json` + a compact change report (never the payload) |
-| `genie-agent-migrate validate <file>` | Full local check of documented `serialized_space` rules |
-| `genie-agent-migrate report <file>` | Compact summary: tables / metric views / functions, prose flags, mapping coverage |
+| `migrate.py render --target <t>` | Emit the remapped, re-sorted, validated `*.geniespace.json` + a compact change report (never the payload) |
+| `migrate.py validate <file>` | Full local check of documented `serialized_space` rules |
+| `migrate.py report <file>` | Compact summary: tables / metric views / functions, prose flags, mapping coverage |
 
-Ship as a self-contained plugin directory (script + `pyproject.toml` + tests, mirroring
-the repo layout) plus a `SKILL.md` that tells Genie Code when to run the flow and the
-safety rules: always validate before deploy, never hand-edit identifiers in the JSON, and
-review prose flags before promoting.
+In this plugins repo, the skill is developed like the existing plugin — its own directory
+with unit tests (run here / in CI) — but the script itself stays dependency-light so it
+runs unchanged wherever Genie Code executes it. Installation is copying the folder into
+`.assistant/skills/`; there is no pip-install step on the consumer side.
 
 ## v2 candidate: workspace adoption & drift audit
 
@@ -184,6 +224,13 @@ plumbing and per-Agent read path) or the shared Agent index proposed in
 
 ## Open questions
 
+- **Verify Genie Code's execution surface before building.** Genie Code ships built-in
+  `databricks-core` / `databricks-dabs` skills, which implies bundle CLI commands
+  (`generate`, `validate`, `deploy`, `bind`) are runnable from Genie Code — but confirm
+  the mechanics on a real workspace: shell availability, working directory against a Git
+  folder, auth passthrough, and whether skill scripts can read/write repo files from that
+  same surface. If the CLI surface turns out to be restricted, the skill degrades
+  gracefully (script still runs; CLI steps become instructions for the user).
 - Does `bundle plan` diff `serialized_space` for bound `genie_spaces` under the direct
   engine? If yes, the v2 audit only needs the unmanaged-Agents half. Verify against a
   real bound Agent before building anything.
