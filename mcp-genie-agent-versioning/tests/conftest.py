@@ -68,6 +68,27 @@ class InMemoryBackend:
             ]
             return QueryResult(columns, [[row.get(column) for column in columns] for row in rows])
 
+        if stripped.startswith("SELECT") and "version_id IN (:version_id_a, :version_id_b)" in sql:
+            # Covers both diff queries (metadata pair and envelope pair): the fake returns
+            # whole rows, so the SQL text itself is what the envelope-free assertions check.
+            wanted = {
+                version_id
+                for version_id in (
+                    param_value(params, "version_id_a"),
+                    param_value(params, "version_id_b"),
+                )
+                if version_id is not None
+            }
+            rows = [
+                row
+                for row in self.rows[schema.AGENT_CONFIG_VERSIONS].values()
+                if row["space_id"] == param_value(params, "space_id")
+                and row["version_id"] in wanted
+            ]
+            rows.sort(key=lambda row: (row["created_at"], row["version_id"]))
+            columns = list(rows[0].keys()) if rows else []
+            return QueryResult(columns, [[row.get(column) for column in columns] for row in rows])
+
         if stripped.startswith("SELECT") and "version_id = :version_id" in sql:
             version_id = param_value(params, "version_id") or ""
             row = self.rows[schema.AGENT_CONFIG_VERSIONS].get(version_id)

@@ -23,7 +23,9 @@ from .contracts import (
     validate_change_summary,
     validate_limit,
     validate_reason,
+    validate_version_id_pair,
 )
+from .diff import diff_agent_configs, empty_diff_sections
 from .errors import (
     OBOScopeError,
     ToolValidationError,
@@ -320,6 +322,82 @@ def list_agent_versions_core(
     }
 
 
+def _load_stored_envelope(raw: Any) -> dict[str, Any]:
+    try:
+        envelope = json.loads(raw)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("stored configuration envelope is invalid JSON") from exc
+    if not isinstance(envelope, dict):
+        raise RuntimeError("stored configuration envelope is not a JSON object")
+    return envelope
+
+
+def _version_metadata(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "version_id": row["version_id"],
+        "created_at": row["created_at"],
+        "created_by": row["created_by"],
+        "reason": row["reason"],
+        "change_summary": row.get("change_summary"),
+        "config_hash": row["config_hash"],
+    }
+
+
+def diff_agent_versions_core(
+    store: AgentVersionStore,
+    *,
+    space_id: str,
+    version_id_a: str,
+    version_id_b: str,
+) -> dict:
+    """Compare two visible versions; equal hashes never load either envelope."""
+    require_nonempty_string(space_id, "space_id")
+    validate_version_id_pair(version_id_a, version_id_b)
+    rows = store.get_agent_version_metadata_pair(
+        space_id=space_id,
+        version_id_a=version_id_a,
+        version_id_b=version_id_b,
+    )
+    found_ids = {row["version_id"] for row in rows}
+    missing = [
+        version_id for version_id in (version_id_a, version_id_b) if version_id not in found_ids
+    ]
+    if missing:
+        return {
+            "ok": False,
+            "error_type": "not_found",
+            "message": (
+                "no version is visible with that `space_id` and `version_id`(s): "
+                + ", ".join(missing)
+            ),
+            "missing_version_ids": missing,
+        }
+    # The SQL ordered the pair by (created_at, version_id) ascending: row 0 is older.
+    older, newer = rows[0], rows[1]
+    hash_match = older["config_hash"] == newer["config_hash"]
+    if hash_match:
+        sections = empty_diff_sections()
+    else:
+        envelope_rows = store.get_agent_version_config_pair(
+            space_id=space_id,
+            version_id_a=version_id_a,
+            version_id_b=version_id_b,
+        )
+        envelopes = {row["version_id"]: row["config_envelope"] for row in envelope_rows}
+        sections = diff_agent_configs(
+            _load_stored_envelope(envelopes[older["version_id"]]),
+            _load_stored_envelope(envelopes[newer["version_id"]]),
+        )
+    return {
+        "ok": True,
+        "space_id": space_id,
+        "config_hash_match": hash_match,
+        "version_a": _version_metadata(older),
+        "version_b": _version_metadata(newer),
+        **sections,
+    }
+
+
 def get_agent_version_core(
     store: AgentVersionStore,
     *,
@@ -483,6 +561,30 @@ def register_tools(mcp_server, settings: Settings) -> None:
                 space_id=space_id,
                 limit=limit,
                 cursor=cursor,
+            ),
+        )
+
+    @mcp_server.tool
+    async def diff_agent_versions(space_id: str, version_id_a: str, version_id_b: str) -> dict:
+        """Compare two stored versions of one Genie Agent and report what changed.
+
+        Returns identifiers, counts, and booleans — never configuration content. The
+        response labels the older row ``version_a`` and the newer row ``version_b``
+        regardless of argument order, so ``added`` always means "present only in the
+        newer version". Equal ``config_hash`` values short-circuit without loading
+        either configuration. Use this between ``list_agent_versions`` and
+        ``restore_agent_config_version`` to choose a rollback target; call
+        ``get_agent_version`` only when full content is genuinely needed.
+        """
+        return await to_thread.run_sync(
+            _run_tool,
+            settings,
+            "diff_agent_versions",
+            lambda _workspace, store: diff_agent_versions_core(
+                store,
+                space_id=space_id,
+                version_id_a=version_id_a,
+                version_id_b=version_id_b,
             ),
         )
 

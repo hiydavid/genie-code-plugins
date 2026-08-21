@@ -93,6 +93,49 @@ class AgentVersionStore:
             [Param("space_id", space_id), Param("version_id", version_id)],
         ).first()
 
+    def get_agent_version_metadata_pair(
+        self, *, space_id: str, version_id_a: str, version_id_b: str
+    ) -> list[dict]:
+        """Read both rows' diff metadata in one round trip, oldest first.
+
+        The SQL orders by ``created_at, version_id`` so callers never compare timestamps
+        in Python, and ``config_envelope`` is never selected.
+        """
+        sql = (
+            "SELECT version_id, created_at, created_by, config_hash, reason, change_summary "
+            f"FROM {self._versions_table} "
+            "WHERE space_id = :space_id "
+            "AND version_id IN (:version_id_a, :version_id_b) "
+            "ORDER BY created_at, version_id"
+        )
+        return self._run(
+            sql,
+            [
+                Param("space_id", space_id),
+                Param("version_id_a", version_id_a),
+                Param("version_id_b", version_id_b),
+            ],
+        ).dicts()
+
+    def get_agent_version_config_pair(
+        self, *, space_id: str, version_id_a: str, version_id_b: str
+    ) -> list[dict]:
+        """Load both configuration envelopes in one round trip (hash-mismatch path only)."""
+        sql = (
+            "SELECT version_id, config_envelope "
+            f"FROM {self._versions_table} "
+            "WHERE space_id = :space_id "
+            "AND version_id IN (:version_id_a, :version_id_b)"
+        )
+        return self._run(
+            sql,
+            [
+                Param("space_id", space_id),
+                Param("version_id_a", version_id_a),
+                Param("version_id_b", version_id_b),
+            ],
+        ).dicts()
+
     def save_agent_config_version(
         self,
         *,

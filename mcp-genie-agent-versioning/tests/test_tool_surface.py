@@ -26,6 +26,7 @@ def test_exact_v2_tool_surface(settings):
     assert set(registered) == {
         "save_agent_config_version",
         "list_agent_versions",
+        "diff_agent_versions",
         "get_agent_version",
         "restore_agent_config_version",
     }
@@ -48,6 +49,18 @@ def test_get_description_routes_rollback_to_server_side_restore(settings):
     get = _registered_tools(server)["get_agent_version"]
     assert "restore_agent_config_version" in get.description
     assert "payload stays server-side" in " ".join(get.description.split())
+
+
+def test_diff_schema_and_content_safety_instruction(settings):
+    server = FastMCP(name="test")
+    register_tools(server, settings)
+    diff = _registered_tools(server)["diff_agent_versions"]
+    assert diff.parameters["required"] == ["space_id", "version_id_a", "version_id_b"]
+    assert "config" not in diff.parameters["properties"]
+    description = " ".join(diff.description.split())
+    assert "never configuration content" in description
+    assert "restore_agent_config_version" in description
+    assert "get_agent_version" in description
 
 
 def test_restore_schema_and_safety_instruction(settings):
