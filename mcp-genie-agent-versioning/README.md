@@ -15,8 +15,16 @@ MCP so the large serialized configuration never passes through model context.
 | --- | --- |
 | `save_agent_config_version` | Fetch and append the current live configuration. Every successful call creates a new version, including identical content. |
 | `list_agent_versions` | List one Agent's private history with deterministic cursor pagination. |
+| `diff_agent_versions` | Compare two stored versions: identifiers, counts, and booleans only — never configuration content. |
 | `get_agent_version` | Retrieve one complete version using both `space_id` and `version_id`. |
 | `restore_agent_config_version` | Checkpoint the live Agent and restore one stored version with its current etag. |
+
+Rollback planning follows `list_agent_versions` → `diff_agent_versions` →
+`restore_agent_config_version`. The diff labels the older row `version_a` and the newer
+row `version_b` regardless of argument order, so `added` always means "present only in
+the newer version". It returns identifiers and counts instead of configuration content,
+caps identifier lists at 50 entries with exact totals, and short-circuits without loading
+either stored payload when both rows share a `config_hash`.
 
 `save_agent_config_version` fetches the live Agent with `include_serialized_space=true`
 through the caller's OBO identity, so `serialized_space` never passes through Genie Code's

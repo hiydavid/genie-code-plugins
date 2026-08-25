@@ -90,6 +90,16 @@ def validate_reason(value: Any) -> str:
     return str(value)
 
 
+def validate_version_id_pair(version_id_a: Any, version_id_b: Any) -> None:
+    """A diff needs two distinct, non-empty version ids."""
+    require_nonempty_string(version_id_a, "version_id_a")
+    require_nonempty_string(version_id_b, "version_id_b")
+    if version_id_a == version_id_b:
+        raise ToolValidationError(
+            "`version_id_a` and `version_id_b` must identify two different versions."
+        )
+
+
 def _validate_nullable_string(config: Mapping[str, Any], name: str) -> None:
     value = config[name]
     if value is not None and not isinstance(value, str):

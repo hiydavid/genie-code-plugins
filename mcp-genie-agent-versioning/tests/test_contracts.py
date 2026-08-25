@@ -7,7 +7,12 @@ import json
 
 import pytest
 
-from server.contracts import decode_cursor, encode_cursor, prepare_envelope
+from server.contracts import (
+    decode_cursor,
+    encode_cursor,
+    prepare_envelope,
+    validate_version_id_pair,
+)
 from server.errors import ToolValidationError
 
 
@@ -197,3 +202,21 @@ def test_cursor_round_trip_and_space_binding():
 def test_invalid_cursor_is_rejected():
     with pytest.raises(ToolValidationError, match="invalid"):
         decode_cursor("not-base64!", expected_space_id="space-1")
+
+
+@pytest.mark.parametrize(
+    ("version_id_a", "version_id_b", "message"),
+    [
+        ("", "b", "version_id_a"),
+        ("a", None, "version_id_b"),
+        (" ", "b", "version_id_a"),
+        ("same", "same", "different"),
+    ],
+)
+def test_version_id_pair_validation(version_id_a, version_id_b, message):
+    with pytest.raises(ToolValidationError, match=message):
+        validate_version_id_pair(version_id_a, version_id_b)
+
+
+def test_valid_version_id_pair_passes():
+    assert validate_version_id_pair("one", "two") is None

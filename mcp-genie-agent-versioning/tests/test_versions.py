@@ -15,6 +15,7 @@ from server.errors import ToolValidationError
 from server.sql import SqlError
 from server.store import _InsertBuilder
 from server.tools import (
+    diff_agent_versions_core,
     get_agent_version_core,
     restore_agent_config_version_core,
     save_agent_config_version_core,
@@ -452,3 +453,155 @@ def test_get_is_scoped_by_space_and_labels_historical_etag(store, complete_confi
     not_found = get_agent_version_core(store, space_id="space-2", version_id=saved["version_id"])
     assert not_found["ok"] is False
     assert not_found["error_type"] == "not_found"
+
+
+def test_diff_hash_match_short_circuits_with_one_envelope_free_select(
+    store, backend, complete_config
+):
+    first = save_agent_config_version_core(
+        store, space_id="space-1", config=complete_config, reason="manual"
+    )
+    second = save_agent_config_version_core(
+        store, space_id="space-1", config=complete_config, reason="manual"
+    )
+    backend.calls.clear()
+
+    result = diff_agent_versions_core(
+        store,
+        space_id="space-1",
+        version_id_a=second["version_id"],
+        version_id_b=first["version_id"],
+    )
+
+    assert result["ok"] is True
+    assert result["config_hash_match"] is True
+    assert result["version_a"]["version_id"] == first["version_id"]
+    assert result["version_b"]["version_id"] == second["version_id"]
+    assert result["serialized_space_changes"]["sample_questions"] == {
+        "added": 0,
+        "removed": 0,
+        "modified": 0,
+    }
+    selects = [sql for sql, _params in backend.calls if sql.lstrip().startswith("SELECT")]
+    assert len(selects) == 1
+    assert "config_envelope" not in selects[0]
+
+
+def test_diff_hash_mismatch_loads_envelopes_in_second_select(store, backend, complete_config):
+    first = save_agent_config_version_core(
+        store, space_id="space-1", config=complete_config, reason="manual"
+    )
+    changed = {**complete_config, "title": "Revenue analyst v2"}
+    second = save_agent_config_version_core(
+        store, space_id="space-1", config=changed, reason="before_update"
+    )
+    backend.calls.clear()
+
+    result = diff_agent_versions_core(
+        store,
+        space_id="space-1",
+        version_id_a=first["version_id"],
+        version_id_b=second["version_id"],
+    )
+
+    assert result["config_hash_match"] is False
+    assert result["envelope_changes"]["title"] == {
+        "changed": True,
+        "a": "Revenue analyst",
+        "b": "Revenue analyst v2",
+    }
+    selects = [sql for sql, _params in backend.calls if sql.lstrip().startswith("SELECT")]
+    assert len(selects) == 2
+    assert "config_envelope" not in selects[0]
+    assert "config_envelope" in selects[1]
+
+
+def test_diff_not_found_names_missing_version_ids(store, backend, complete_config):
+    saved = save_agent_config_version_core(
+        store, space_id="space-1", config=complete_config, reason="manual"
+    )
+    backend.calls.clear()
+
+    one_missing = diff_agent_versions_core(
+        store,
+        space_id="space-1",
+        version_id_a=saved["version_id"],
+        version_id_b="missing",
+    )
+    both_missing = diff_agent_versions_core(
+        store, space_id="space-1", version_id_a="a-missing", version_id_b="b-missing"
+    )
+    other_space = diff_agent_versions_core(
+        store,
+        space_id="space-2",
+        version_id_a=saved["version_id"],
+        version_id_b="missing",
+    )
+
+    assert one_missing["ok"] is False
+    assert one_missing["error_type"] == "not_found"
+    assert one_missing["missing_version_ids"] == ["missing"]
+    assert both_missing["missing_version_ids"] == ["a-missing", "b-missing"]
+    assert saved["version_id"] in other_space["missing_version_ids"]
+    selects = [sql for sql, _params in backend.calls if sql.lstrip().startswith("SELECT")]
+    assert len(selects) == 3  # one metadata-pair read per call; no envelope reads
+
+
+def test_diff_rejects_identical_and_blank_version_ids(store):
+    with pytest.raises(ToolValidationError, match="different"):
+        diff_agent_versions_core(
+            store, space_id="space-1", version_id_a="same", version_id_b="same"
+        )
+    with pytest.raises(ToolValidationError, match="version_id_a"):
+        diff_agent_versions_core(store, space_id="space-1", version_id_a=" ", version_id_b="other")
+
+
+def test_diff_labels_older_row_a_and_reports_added_relative_to_it(store, complete_config):
+    older = save_agent_config_version_core(
+        store, space_id="space-1", config=complete_config, reason="manual"
+    )
+    space = json.loads(complete_config["serialized_space"])
+    space["data_sources"]["tables"] = [{"identifier": "cat.schema.new_table", "column_configs": []}]
+    newer = save_agent_config_version_core(
+        store,
+        space_id="space-1",
+        config={**complete_config, "serialized_space": json.dumps(space)},
+        reason="before_update",
+    )
+
+    result = diff_agent_versions_core(
+        store,
+        space_id="space-1",
+        version_id_a=newer["version_id"],  # newer passed first: labels must normalize
+        version_id_b=older["version_id"],
+    )
+
+    assert result["version_a"]["version_id"] == older["version_id"]
+    assert result["version_b"]["version_id"] == newer["version_id"]
+    assert result["serialized_space_changes"]["tables"]["added"] == ["cat.schema.new_table"]
+
+
+def test_diff_tie_breaks_equal_created_at_by_version_id(store, backend):
+    def seeded_row(version_id: str, config_hash: str) -> dict:
+        return {
+            "version_id": version_id,
+            "space_id": "space-1",
+            "reason": "manual",
+            "config_envelope": '{"serialized_space": "{}"}',
+            "config_hash": config_hash,
+            "change_summary": None,
+            "parent_version_id": None,
+            "rollback_target_version_id": None,
+            "created_at": "2026-07-30T12:00:00.000Z",
+            "created_by": "alice@example.com",
+        }
+
+    backend.rows[schema.AGENT_CONFIG_VERSIONS]["b-row"] = seeded_row("b-row", "hash-b")
+    backend.rows[schema.AGENT_CONFIG_VERSIONS]["a-row"] = seeded_row("a-row", "hash-a")
+
+    result = diff_agent_versions_core(
+        store, space_id="space-1", version_id_a="b-row", version_id_b="a-row"
+    )
+
+    assert result["version_a"]["version_id"] == "a-row"
+    assert result["version_b"]["version_id"] == "b-row"
