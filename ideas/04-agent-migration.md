@@ -102,8 +102,10 @@ data sources has a payload that should not be manually edited through model cont
 - **Cross-workspace promotion is file-mediated anyway.** Export → Git → deploy needs no
   cross-workspace identity; OBO tokens are workspace-scoped, so an App is the wrong shape
   for that hop regardless.
-- Mirrors the reasoning in [idea 3](./03-agent-diff.md): don't build server plumbing for
-  work that is already local to where the agent lives.
+- Mirrors the reasoning behind `diff_agent_versions` in
+  [`mcp-genie-agent-versioning`](../mcp-genie-agent-versioning/README.md) (formerly idea 3,
+  since shipped): don't build server plumbing for work that is already local to where the
+  agent lives.
 
 ## v1 design
 
