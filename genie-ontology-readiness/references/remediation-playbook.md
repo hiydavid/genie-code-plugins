@@ -32,14 +32,24 @@ Before any mutation, present:
 
 Wait for explicit approval of that action. Approval to assess readiness is not approval
 to edit objects, publish Pages, change grants, certify assets, or alter an Agent. Do not
-batch unrelated fixes into the approved action.
+batch unrelated fixes into the approved action. In Genie Code, the platform's tool-approval
+prompt satisfies this only for the exact action and target objects presented above;
+confirm the approval covers them before proceeding.
 
 After an approved action:
 
-1. Use the appropriate native Genie Code or Databricks capability.
+1. Execute with the capability that owns the surface, routing to sibling skills where
+   one exists: upstream pipeline or table change (for example `databricks-pipelines` or
+   `databricks-jobs`) for grain, entity, and source logic; `databricks-unity-catalog` for
+   metadata, tags, certification, grants, and fine-grained controls;
+   `databricks-metric-views` for Metric View logic; workspace Page authoring for business
+   definitions (a manual surface — confirm owner and Sources before publishing);
+   `databricks-data-discovery` for Genie One validation. Use Genie Agent instructions or
+   benchmarks only for behavior truly owned by that Agent.
 2. Show the observed result or proposed diff when the surface supports review.
 3. Re-run only the affected checks and representative questions first.
-4. Update the readiness card's evidence, statuses, conditions, and verdict.
+4. Update the readiness card's evidence labels (`verified`/`user-declared`/`unknown`),
+   statuses, conditions, and verdict.
 5. Stop after the approved action. Offer the next action separately if a material gap
    remains.
 

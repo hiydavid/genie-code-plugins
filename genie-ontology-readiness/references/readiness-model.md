@@ -4,6 +4,11 @@ Use this model only after defining the domain, workflow, rollout target, persona
 critical business concepts. Readiness is scoped: an organization can be ready for a
 Sales ARR pilot without being ready across every business domain.
 
+A persona is **materially different** when its effective access to in-scope sources
+differs — through group membership, grants, row filters, column masks, or
+attribute-based policies — such that it would retrieve different rows, columns, or
+answers. Compare effective access, not job titles.
+
 ## Evidence and layer statuses
 
 Record each material finding with one evidence state:
@@ -21,9 +26,27 @@ Use these layer statuses:
 - `missing`: a critical capability or artifact is absent.
 - `not assessed`: access or evidence was insufficient.
 
-Layer status summarizes evidence; it does not determine the verdict by simple counting.
+Decide each layer status from criterion evidence using this table, not by counting:
+
+| Evidence situation | Layer status |
+|---|---|
+| Every mandatory criterion for the layer is `verified` | `established` |
+| Every mandatory criterion has a verified usable path, and remaining gaps are named and non-blocking | `partial` |
+| A mandatory criterion is verified absent for this scope | `missing` |
+| A criterion's evidence is inaccessible or unsearched, so it is neither verified nor confirmed absent | `not assessed` |
+
+A `partial` layer must record its named gap as a condition or an expansion-backlog
+item. Layer status summarizes evidence; it does not determine the verdict by simple
+counting.
 
 ## Six-layer checklist
+
+The "For the pilot path" bullets in each layer are the mandatory pilot criteria for the
+declared scope. A bullet carrying an applicability qualifier — "where practical",
+"when required", "when relevant", "when available and useful" — is mandatory only when
+the qualifier's condition holds for the declared scope or organizational policy. Record
+each applicability decision and its reason. A criterion judged not applicable is
+neither met nor missing; it is reported as such with the reason.
 
 ### Layer 0: Physical data foundation
 
@@ -66,9 +89,12 @@ For the pilot path, establish that:
   available and useful for scoping discovery.
 
 For a constrained pilot, a verified canonical definition outside a Metric View may be a
-condition rather than a blocker. Treat it as a blocker when competing logic exists, the
-metric is high stakes, or the rollout target is `expand`. A missing Page or Domain is not
-automatically a blocker when the scoped terms and sources are already unambiguous.
+condition rather than a blocker, but only with minimum evidence: a named owner, a dated
+artifact holding the definition, logic tested against representative questions, and a
+retrieval guardrail preventing a competing answer from reaching pilot users. Without
+any of these, treat the gap as a blocker when competing logic exists, the metric is high
+stakes, or the rollout target is `expand`. A missing Page or Domain is not automatically
+a blocker when the scoped terms and sources are already unambiguous.
 
 ### Layer 3: Context-rich assets
 
@@ -139,8 +165,8 @@ Return `Not ready` when any of these affects the declared scope:
 - An intended persona lacks necessary access, or sensitive data lacks required controls.
 - Representative ground truth is absent, a critical question fails acceptance criteria,
   or an answer relies on an inappropriate source.
-- A mandatory criterion is `unknown`. Explain the evidence needed to clear it rather than
-  presenting the unknown itself as a product defect.
+- A mandatory criterion is `unknown` or `not assessed`. Explain the evidence needed to
+  clear it rather than presenting the unknown itself as a product defect.
 
 ### Ready with conditions
 
@@ -160,8 +186,11 @@ sources, and owners and a review cadence are named. Maturity gaps outside the de
 scope remain a post-pilot backlog and do not silently broaden the verdict.
 
 For an `expand` target, use the same labels but evaluate the broader declared audience,
-question set, asset authority, monitoring, and drift controls. Do not reuse a narrow
-pilot verdict as proof of organization-wide readiness.
+question set, asset authority, monitoring, and drift controls, and require expansion
+evidence: representative questions tested under each expanded persona's effective
+access, monitoring or drift checks observed over a stated window, and a defined failure
+tolerance for launch. Do not reuse a narrow pilot verdict as proof of organization-wide
+readiness.
 
 ## Fix ownership
 
