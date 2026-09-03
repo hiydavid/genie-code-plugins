@@ -30,22 +30,33 @@ Before any mutation, present:
 - Required privileges, side effects, and affected users
 - Verification method and recovery approach when relevant
 
-Wait for explicit approval of that action. Approval to assess readiness is not approval
-to edit objects, publish Pages, change grants, certify assets, or alter an Agent. Do not
-batch unrelated fixes into the approved action. In Genie Code, the platform's tool-approval
-prompt satisfies this only for the exact action and target objects presented above;
-confirm the approval covers them before proceeding.
+Wait for the user's explicit in-chat approval of that action. Approval to assess
+readiness is not approval to edit objects, publish Pages, change grants, certify assets,
+or alter an Agent. Do not batch unrelated fixes into the approved action.
+
+A host tool-approval prompt is not this approval. Genie Code's default Auto-approve mode
+lets a classifier approve a tool call with no prompt at all, and Databricks describes it
+as a productivity feature rather than a security boundary. Ask in the chat, wait for a
+yes that names the action and its target objects, and only then run the tool call.
 
 After an approved action:
 
 1. Execute with the capability that owns the surface, routing to sibling skills where
-   one exists: upstream pipeline or table change (for example `databricks-pipelines` or
-   `databricks-jobs`) for grain, entity, and source logic; `databricks-unity-catalog` for
-   metadata, tags, certification, grants, and fine-grained controls;
-   `databricks-metric-views` for Metric View logic; workspace Page authoring for business
-   definitions (a manual surface — confirm owner and Sources before publishing);
-   `databricks-data-discovery` for Genie One validation. Use Genie Agent instructions or
-   benchmarks only for behavior truly owned by that Agent.
+   one is installed:
+   - Upstream pipeline or table change for grain, entity, and source logic:
+     `databricks-pipelines` or `databricks-jobs`.
+   - Metadata, tags, certification, grants, and fine-grained controls:
+     `databricks-unity-catalog`.
+   - Metric View logic: `databricks-metric-views`.
+   - Business definitions: Pages in the workspace. Genie Code can draft a Page, and can
+     bulk-draft Pages extracted from attached documents. Drafts are visible only in the
+     owner's Genie One conversations until the owner or a curator with
+     `MANAGE DISCOVERY` publishes them. Confirm owner, Sources, and Related assets
+     before publication.
+   - Genie One validation: `databricks-data-discovery` from a CLI runtime, or the Genie
+     One UI.
+   - Genie Agent instructions, trusted assets, scope, or benchmarks:
+     `databricks-genie-agents`, only for behavior truly owned by that Agent.
 2. Show the observed result or proposed diff when the surface supports review.
 3. Re-run only the affected checks and representative questions first.
 4. Update the readiness card's evidence labels (`verified`/`user-declared`/`unknown`),
@@ -67,8 +78,11 @@ questions explicitly; do not label the original scope ready.
 ### Metadata and lifecycle
 
 Improve descriptions and comments where they affect scoped questions. Apply reviewed
-ownership, domain, and sensitivity tags. Certify assets only under the organization's
-approval standard, and deprecate stale assets only after confirming downstream impact.
+ownership, domain, and sensitivity tags. Certification and deprecation set the governed
+tag `system.certification_status` to `certified` or `deprecated`; this needs `ASSIGN` on
+that tag plus ownership of the asset or `APPLY TAG`, `USE SCHEMA`, and `USE CATALOG`.
+Certify only under the organization's approval standard, and deprecate stale assets only
+after confirming downstream impact.
 
 ### Metric View
 
@@ -80,7 +94,9 @@ language. Validate the generated SQL and representative results before clearing 
 
 Use a Page for a business definition, synonym, or concept-to-source mapping. Confirm its
 owner, Sources, Related assets, and domain before publication. Publishing changes which
-users can retrieve the Page, so draft creation and publication are separate review points.
+users can retrieve the Page, so draft creation and publication are separate review
+points, each with its own approval. Assigning an asset to a Domain applies that domain's
+governed tag, so it follows the same tag permissions as certification.
 
 ### Governance
 
@@ -92,6 +108,7 @@ design or the declared audience.
 
 Add or correct ground truth, authoritative-source expectations, and acceptance criteria.
 When a failure comes from a stale dashboard, query, notebook, or Agent, update or
-deprecate that source and verify citations. Use Agent instructions or benchmarks only
+deprecate that source and verify citations in the Genie One UI. When a question was
+answered by a Genie Agent that should not own it, correct that Agent's scope or
+description rather than the Ontology assets. Use Agent instructions or benchmarks only
 for behavior truly owned by that Agent.
-

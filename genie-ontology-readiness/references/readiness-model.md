@@ -13,11 +13,27 @@ answers. Compare effective access, not job titles.
 
 Record each material finding with one evidence state:
 
-- `verified`: observed directly in a current workspace object, query result, policy,
-  evaluation, or other authoritative artifact.
+- `verified`: observed directly by you in a current workspace object, query result,
+  policy, CLI output, evaluation, or other authoritative artifact. A Genie One response
+  the user pastes verbatim, including its cited sources, counts as `verified` for that
+  question; a summary of what the user saw does not.
 - `user-declared`: asserted by an accountable user or owner but not independently
-  verified during this assessment.
+  observed during this assessment.
 - `unknown`: unavailable, conflicting, stale, or lacking an accountable confirmation.
+
+Mandatory criteria are of two kinds, and `user-declared` means something different for
+each:
+
+- **Intent criteria** state what the organization wants or who is accountable: the
+  workflow, personas, expected facts, acceptance criteria, the business meaning of a
+  term, owners, and review cadence. An accountable user's declaration, recorded in the
+  card with their name or role, is the terminal state for these criteria and satisfies
+  them.
+- **Observation criteria** state how data, metadata, semantic assets, access, or answers
+  actually behave. For these, `user-declared` is provisional: it is usable evidence, but
+  the criterion is not met until you or an artifact confirms it. It yields a `partial`
+  layer status and caps the verdict at `Ready with conditions`, with a condition naming
+  who will verify it and what triggers the review.
 
 Use these layer statuses:
 
@@ -30,8 +46,9 @@ Decide each layer status from criterion evidence using this table, not by counti
 
 | Evidence situation | Layer status |
 |---|---|
-| Every mandatory criterion for the layer is `verified` | `established` |
-| Every mandatory criterion has a verified usable path, and remaining gaps are named and non-blocking | `partial` |
+| Every mandatory observation criterion is `verified` and every intent criterion is declared by an accountable owner | `established` |
+| Every mandatory criterion is met through a verified route that is not the preferred one (for example a canonical view instead of a Metric View), and the remaining gap is named and non-blocking | `partial` |
+| A mandatory observation criterion rests on `user-declared` evidence, and no criterion is absent or `unknown` | `partial` |
 | A mandatory criterion is verified absent for this scope | `missing` |
 | A criterion's evidence is inaccessible or unsearched, so it is neither verified nor confirmed absent | `not assessed` |
 
@@ -43,10 +60,10 @@ counting.
 
 The "For the pilot path" bullets in each layer are the mandatory pilot criteria for the
 declared scope. A bullet carrying an applicability qualifier — "where practical",
-"when required", "when relevant", "when available and useful" — is mandatory only when
-the qualifier's condition holds for the declared scope or organizational policy. Record
-each applicability decision and its reason. A criterion judged not applicable is
-neither met nor missing; it is reported as such with the reason.
+"when required", "when relevant", "when available and useful", "when more than one" —
+is mandatory only when the qualifier's condition holds for the declared scope or
+organizational policy. Record each applicability decision and its reason. A criterion
+judged not applicable is neither met nor missing; it is reported as such with the reason.
 
 ### Layer 0: Physical data foundation
 
@@ -101,6 +118,9 @@ a blocker when the scoped terms and sources are already unambiguous.
 For the pilot path, identify the dashboards, queries, notebooks, documentation, and
 Genie Agents that the ontology may learn from. Confirm that authoritative assets are
 current, understandable, and distinguishable from stale or experimental alternatives.
+Certification and deprecation are the governed tag `system.certification_status`; an
+asset without it is uncertified, which is a weaker signal than certified but not the
+same as deprecated.
 
 Certification of trusted assets, deprecation of stale assets, rich documentation, usage
 signals, classification, and quality monitoring become increasingly important before
@@ -118,12 +138,13 @@ For the pilot path, establish that:
 - Personas cannot retrieve sources or rows and columns they are not authorized to see.
 - Row filters, column masks, or attribute-based policies protect sensitive data when
   required.
-- The effect of permissions on answer and citation differences is tested for materially
-  different personas.
+- When more than one materially different persona is in scope, the effect of
+  permissions on answers and citations is tested for each of them.
 
-AI Gateway model access, safety, logging, rate, and cost controls should match the
-organization's rollout requirements. A control is mandatory only when the declared use
-case or organizational policy requires it.
+Unity AI Gateway controls (model access, guardrails, logging, rate and cost limits)
+govern model serving endpoints and MCP or agent traffic, not Genie One itself. They are
+in scope only when custom agents, Agent Bricks, or serving endpoints contribute to the
+pilot and organizational policy requires them.
 
 ### Layer 5: Evaluation and improvement
 
@@ -133,7 +154,12 @@ For the pilot path, establish that:
   boundaries in scope.
 - Each question has expected facts or an answer, an authoritative source, acceptance
   criteria, and an owner.
-- Answers have been reviewed for correctness and authoritative citations in Genie One.
+- Each question's Genie One answer and executed SQL have been reviewed against its
+  acceptance criteria, and the answer path (Genie Agent or data-asset search) is
+  recorded.
+- Each question's citations have been reviewed in the Genie One UI and point to the
+  authoritative sources. The CLI does not expose citations, so this is a separate check
+  from answer correctness.
 - Failed questions are traced to their owning layer instead of patched with unrelated
   prose.
 - Feedback ownership and a review cadence exist for the pilot.
@@ -170,20 +196,25 @@ Return `Not ready` when any of these affects the declared scope:
 
 ### Ready with conditions
 
-Return `Ready with conditions` when all mandatory pilot criteria are evidenced, but a
-specific constraint must limit the questions, audience, sources, or rollout duration.
-Examples include a verified definition that has not yet been promoted to a Metric View,
-manual monitoring for the first pilot, or incomplete deprecation of non-authoritative
-assets that cannot enter the pilot users' retrieval context.
+Return `Ready with conditions` when every mandatory criterion is evidenced, but either a
+specific constraint must limit the questions, audience, sources, or rollout duration, or
+a mandatory observation criterion rests on `user-declared` evidence. Examples include a
+verified definition that has not yet been promoted to a Metric View, manual monitoring
+for the first pilot, incomplete deprecation of non-authoritative assets that cannot
+enter the pilot users' retrieval context, or a persona-access test that a representative
+ran and summarized but did not paste verbatim.
 
 Every condition must state the guardrail, owner, and event or date that triggers review.
+A condition created for `user-declared` evidence names who will verify it and how.
 
 ### Ready for pilot
 
-Return `Ready for pilot` when all mandatory criteria pass for the declared scope and
-personas, representative questions meet their acceptance criteria using appropriate
-sources, and owners and a review cadence are named. Maturity gaps outside the declared
-scope remain a post-pilot backlog and do not silently broaden the verdict.
+Return `Ready for pilot` when every mandatory observation criterion is `verified` for
+the declared scope and personas, every intent criterion is declared by an accountable
+owner, representative questions meet their acceptance criteria using appropriate sources
+with authoritative citations, and owners and a review cadence are named. Maturity gaps
+outside the declared scope remain a post-pilot backlog and do not silently broaden the
+verdict.
 
 For an `expand` target, use the same labels but evaluate the broader declared audience,
 question set, asset authority, monitoring, and drift controls, and require expansion
@@ -203,4 +234,4 @@ Route a failed answer to the layer that owns the meaning:
 | Measure, dimension, filter, calculation, or relationship | Metric View |
 | Source description, classification, lifecycle, or access | Unity Catalog metadata or policy |
 | Stale or misleading inferred context | Source dashboard, query, notebook, documentation, or Agent |
-| Agent-specific behavior | Genie Agent instructions, examples, trusted assets, or benchmark |
+| Answer came from a Genie Agent with stale or conflicting context, or an Agent matched a question it should not own | That Agent's instructions, trusted assets, scope, or benchmarks via `databricks-genie-agents` |

@@ -5,18 +5,39 @@ an estate-wide catalog project. Prefer current, authoritative artifacts over pro
 
 ## Runtime and routing
 
-You run inside Genie Code in the Databricks workspace with the invoking user's Unity
-Catalog permissions. Inspect natively before asking: Unity Catalog and
-`INFORMATION_SCHEMA` metadata, Catalog Explorer definitions, workspace search, and
-read-only SQL execution through Genie Code's approved actions. Route deeper inspection
-to the sibling skill that owns the surface:
+Detect the runtime before planning evidence collection:
+
+- **Genie Code Agent mode.** You act with the invoking user's Unity Catalog permissions
+  through Genie Code's tools: running SQL, reading Unity Catalog metadata, reading
+  notebooks and workspace files, and any managed MCP servers the user added. A terminal
+  and the databricks CLI are not guaranteed, and the managed MCP catalog offers Genie
+  Agents but not Genie One. If no shell or CLI tool is available, the user runs Genie One
+  questions in the browser and pastes the responses. Do not load `databricks-core` here;
+  its profile-selection flow applies only to CLI runtimes.
+- **Claude Code, Cursor, or another CLI runtime.** Load `databricks-core` first for CLI,
+  auth, and profile selection, then the product skill that owns each surface. Confirm
+  `databricks genie ask --help` works before promising CLI validation; it needs CLI
+  v1.9.0 or newer.
+
+Inspect natively before asking: Unity Catalog and `INFORMATION_SCHEMA` metadata, Catalog
+Explorer definitions, workspace search, and read-only SQL. Route deeper inspection to
+the sibling skill that owns the surface:
 
 | Evidence need | Route |
 |---|---|
-| CLI availability, auth, warehouse discovery, query execution | `databricks-core` |
-| Genie One question validation | `databricks-data-discovery` (`databricks experimental genie ask`) |
+| CLI availability, auth, profiles, warehouse discovery (CLI runtimes only) | `databricks-core` |
+| Genie One question validation from the CLI | `databricks-data-discovery` (`databricks genie ask`) |
+| Genie Agent configuration, benchmarks, eval runs, monitoring | `databricks-genie-agents` |
 | Metric View definitions, generated SQL | `databricks-metric-views` |
 | Grants, tags, classification, row filters, column masks, system tables | `databricks-unity-catalog` |
+| Bounded read-only SQL for grain, freshness, keys, tags, and access | [inspection-queries.md](inspection-queries.md) |
+
+A skill that is not installed cannot be routed to; fall back to the workspace UI and say
+so in the card.
+
+Keep the assessment read-only in every runtime. Genie Code's approval mode may be
+Auto-approve, which lets a classifier approve tool calls without a prompt; that does not
+change what you are allowed to run during an assessment.
 
 ## Collection order
 
@@ -58,8 +79,9 @@ aggregate data profiles. Determine:
 
 Use bounded read-only queries for claims such as uniqueness or freshness. Bounded
 means: aggregate or summary output, predicates scoped to the critical sources and a
-recent time window, and an explicit row limit on any preview. A table name, column
-name, or declared key is not proof that the underlying data satisfies the claim.
+recent time window, and an explicit row limit on any preview. Templates are in
+[inspection-queries.md](inspection-queries.md). A table name, column name, or declared
+key is not proof that the underlying data satisfies the claim.
 
 ## Layer 1: Metadata
 
@@ -82,12 +104,22 @@ Inspect:
   and Genie Agents surfaced by a workspace search scoped to those concepts. Report
   "no conflict found within the searched scope"; never report search absence as proof
   that one governed definition exists
-- Domain or subdomain membership and ownership
-- Page state, owner review, term definitions, Sources, and Related assets
+- Domain or subdomain membership and ownership. Domains are built on governed tags: a
+  domain maps to a governed tag of the same name and a subdomain to
+  `<domain>/<subdomain>`, so membership for catalog objects is visible in the
+  `TABLE_TAGS`, `SCHEMA_TAGS`, and `CATALOG_TAGS` views, and for dashboards, Genie
+  Agents, and Metric Views on the domain page in Discover. Domains and the Discover page
+  are a Public Preview gated by the account setting "Domains and Discover Page" and the
+  workspace setting "Discover Page"; if they are off, mark the Domain criterion not
+  applicable with that reason
+- Page state, owner review, term definitions, Synonyms, Sources, and Related assets
 
-Draft Pages are not generally retrievable by all Genie One users. Record whether a Page
-is draft or published and whether its intended audience can use it. Record preview or
-permission limitations separately from content gaps.
+Draft Pages are available only in the Page owner's own Genie One conversations.
+Published Pages are available in every Genie One conversation and are cited in answers.
+Only the Page owner or a curator with `MANAGE DISCOVERY` on the domain can publish.
+Record whether a Page is draft or published and whether its intended audience can
+therefore retrieve it. Record preview or permission limitations separately from content
+gaps.
 
 ## Layer 3: Context-rich assets
 
@@ -97,18 +129,26 @@ inspect freshness, use, description quality, owner, certification, and conflicti
 alternatives. Absence of a large asset corpus is evidence of limited inferred context,
 not automatic evidence that the modeled head is wrong.
 
+Certification and deprecation are the governed tag `system.certification_status` with
+the values `certified` and `deprecated`. For catalog objects, read it from `TABLE_TAGS`
+or the other tag views. For dashboards, Genie Agents, and apps, which search cannot
+filter by tag, read the badge on the asset or its Discover entry. Absence of the tag
+means uncertified, not deprecated.
+
 ## Layer 4: Governance
 
 Inspect effective access for each materially different persona, preferably through group
 membership and current Unity Catalog grants. Record relevant row filters, column masks,
-governed tags, attribute-based policies, and required AI Gateway controls.
+governed tags, attribute-based policies, and any Unity AI Gateway controls that apply to
+custom agents or endpoints in scope.
 
-Do not assume that the assessor's access represents a consumer. Genie Code cannot test
-another persona's effective access itself: a negative-access check that was not
-executed stays `unknown` and leaves the mandatory governance criterion `unknown` — it is
-never a `user-declared` pass. When impersonation or a persona-specific test is
-unavailable, ask an authorized representative to run the same question and label the
-result `user-declared` or `unknown` as appropriate.
+Do not assume that the assessor's access represents a consumer. No runtime here can
+impersonate another persona. A negative-access check that was not executed stays
+`unknown` and leaves the mandatory governance criterion `unknown`; it is never a
+`user-declared` pass. When more than one materially different persona is in scope, ask
+an authorized representative of each to run the same questions in Genie One and paste
+the full responses. A verbatim response is `verified` for that persona; a summary is
+`user-declared` and caps the verdict as described in readiness-model.md.
 
 ## Layer 5: Evaluation and improvement
 
@@ -121,12 +161,30 @@ Represent each test case with:
 | Expected facts or answer | Ground truth needed to judge correctness |
 | Authoritative source | Asset that should support the answer |
 | Acceptance criteria | Required facts, tolerances, format, and prohibited leakage |
-| Result and citations | Observed answer, pass/fail, and sources used |
+| Answer path | Whether Genie One answered from a matching Genie Agent or from data-asset search |
+| Result and citations | Observed answer, executed SQL, pass/fail, and the sources cited in the Genie One UI |
+| Evidence state | `verified`, `user-declared`, or `unknown` for this result |
 | Owner | Person accountable for validation and follow-up |
 
+Genie One searches available Genie Agents first and answers from a matching Agent before
+it searches data assets, and it prioritizes human-modeled context in Pages over inferred
+context. Record the path for every question: a pass that depends on an Agent is evidence
+about that Agent, not about the Ontology's modeled head, and belongs in Layer 3.
+
+Capture results this way:
+
+- CLI: `databricks genie ask --include-sql --output json` returns status, answer text,
+  and the executed SQL. It carries no citations. Use it for answer correctness and SQL
+  review.
+- Genie One UI: click the citation icons on the response to see the knowledge sources
+  used. This is the only surface for citation review. A response pasted verbatim with
+  its sources is `verified`; a description of it is `user-declared`.
+- Genie One memories and the assessor's own conversation history can shape answers. Run
+  validation questions in a fresh conversation.
+
 Exercise critical metrics, synonyms, time logic, join paths, entity resolution, source
-selection, and permission boundaries. In Genie One, inspect citations rather than judging
-answer fluency alone. If a Genie Agent supplies domain context, use its monitoring and
+selection, and permission boundaries. Inspect citations rather than judging answer
+fluency alone. If a Genie Agent supplies domain context, use its monitoring and
 benchmarks as supporting evidence, not as a substitute for the Ontology-level question
 set.
 
@@ -134,13 +192,16 @@ set.
 
 Depending on available capabilities and permissions, evidence may come from:
 
-- Unity Catalog and `INFORMATION_SCHEMA` metadata for tables, columns, constraints, and
-  tags (`TABLES`, `VIEWS`, `COLUMNS`, `SCHEMATA`, `TABLE_CONSTRAINTS`, `TABLE_TAGS`,
-  `COLUMN_TAGS`); route detail queries through `databricks-unity-catalog`
+- Unity Catalog and `INFORMATION_SCHEMA` metadata for tables, columns, constraints,
+  tags, and fine-grained controls (`TABLES`, `VIEWS`, `COLUMNS`, `SCHEMATA`,
+  `TABLE_CONSTRAINTS`, `KEY_COLUMN_USAGE`, `REFERENTIAL_CONSTRAINTS`, `TABLE_TAGS`,
+  `COLUMN_TAGS`, `SCHEMA_TAGS`, `ROW_FILTERS`, `COLUMN_MASKS`, `TABLE_PRIVILEGES`);
+  templates in [inspection-queries.md](inspection-queries.md), deeper detail through
+  `databricks-unity-catalog`
 - Catalog Explorer definitions for Metric Views and other governed assets
-- Discover for Domains, Pages, ownership, lifecycle, and certification signals
+- Discover for Domains, Pages, ownership, lifecycle, and certification badges
 - Workspace search and object metadata for dashboards, queries, notebooks, and Agents
-- Genie One answers and source citations
+- Genie One answers and, in the UI only, their source citations
 - Genie Agent Monitor and benchmark results for contributing Agents
 - Query history, audit logs, lineage, and quality monitoring
   (`system.query.history`, `system.access.audit`, `system.access.table_lineage`)
@@ -149,5 +210,4 @@ Depending on available capabilities and permissions, evidence may come from:
 Use only surfaces available in the current environment. Do not claim a check was
 automated when it was manually confirmed, or claim workspace-wide completeness from a
 partial search. State the scope you actually searched for every "no conflict found"
-conclusion.
-
+conclusion, and copy it into the card's "Evidence scope searched" section.
