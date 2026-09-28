@@ -6,13 +6,13 @@ Plugins and extensions for [Databricks Genie Code](https://docs.databricks.com/a
 
 | Plugin | Description |
 | --- | --- |
-| [`mcp-genie-agent-versioning`](./mcp-genie-agent-versioning/) | Prompt-routed Genie Agent configuration version store on Databricks Apps. Provides save, list, get, and restore tools for Genie Agent configurations with OBO auth and Unity Catalog persistence. |
+| [`mcp-genie-agent-versioning`](./mcp/mcp-genie-agent-versioning/) | Prompt-routed Genie Agent configuration version store on Databricks Apps. Provides save, list, get, and restore tools for Genie Agent configurations with OBO auth and Unity Catalog persistence. |
 
 ## Agent Skills
 
 | Skill | Description |
 | --- | --- |
-| [`genie-ontology-readiness`](./genie-ontology-readiness/) | Evidence-backed, six-layer readiness assessment and guided remediation workflow for launching one business domain with Genie Ontology. |
+| [`genie-ontology-readiness`](./skills/genie-ontology-readiness/) | Evidence-backed, six-layer readiness assessment and guided remediation workflow for launching one business domain with Genie Ontology. |
 
 Install a workspace skill by copying its folder to
 `Workspace/.assistant/skills/`. Skills can also be prototyped as user skills under

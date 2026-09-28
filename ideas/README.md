@@ -2,7 +2,7 @@
 
 Ideas for plugins, MCPs, tools, and other extensions that augment Genie One / Genie Agents
 through Genie Code. These focus on product gaps not already covered by native Genie Code
-skills, native Genie features, or the existing [`mcp-genie-agent-versioning`](../mcp-genie-agent-versioning/).
+skills, native Genie features, or the existing [`mcp-genie-agent-versioning`](../mcp/mcp-genie-agent-versioning/).
 
 ---
 
@@ -24,7 +24,7 @@ skills, native Genie features, or the existing [`mcp-genie-agent-versioning`](..
 - Several directions (analytics + impact analysis) share that "Agent index": a DAB job that
   periodically materializes per-space usage metrics (item 2) and agent metadata (item 5) to UC.
 - Item 3 (Agent Comparison & Diff) shipped as the `diff_agent_versions` tool in
-  [`mcp-genie-agent-versioning`](../mcp-genie-agent-versioning/); its design doc was removed
+  [`mcp-genie-agent-versioning`](../mcp/mcp-genie-agent-versioning/); its design doc was removed
   once implemented.
 - Item 4 resolves to a Genie Code workspace skill with an executable script rather than an MCP.
 - Item 6 is content-first: diagnosis protocol and playbooks as markdown, then the same

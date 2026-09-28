@@ -39,7 +39,7 @@ It does not replace native Genie Code capabilities. It sequences them.
 | Chat vs Agent eval semantics | Chat: result-set comparison to gold SQL. Agent: LLM judge + optional evaluation notes. Mode is chosen **at run time**, not per question | [Test and monitor](https://docs.databricks.com/aws/en/genie-agents/monitor) |
 | Agent mode behavior | Multi-step research, multiple SQL queries, structured report — slower by design | [Genie Agents concepts](https://docs.databricks.com/aws/en/genie-agents/concepts) |
 | Custom Genie Code skills | Workspace or user `SKILL.md` packages, auto-loaded by description or `@` mention; may include scripts and reference files | [Genie Code skills](https://docs.databricks.com/aws/en/genie-code/skills) |
-| Config versioning | Save / list / diff / restore via this repo's MCP | [`mcp-genie-agent-versioning`](../mcp-genie-agent-versioning/) |
+| Config versioning | Save / list / diff / restore via this repo's MCP | [`mcp-genie-agent-versioning`](../mcp/mcp-genie-agent-versioning/) |
 
 ### Verdict
 
@@ -167,7 +167,7 @@ Do not add more prose when the failure is grain, joins, or gold SQL.
 - Cluster last eval / Monitor failures (wrong table, wrong grain, bad join, date logic,
   extra columns, conflicting instructions).
 - Apply the fix order; check instruction / snippet caps.
-- Snapshot before edits if [`mcp-genie-agent-versioning`](../mcp-genie-agent-versioning/)
+- Snapshot before edits if [`mcp-genie-agent-versioning`](../mcp/mcp-genie-agent-versioning/)
   is present.
 - Stop after **one lever**; re-eval. Do not "keep adding instructions."
 
@@ -322,7 +322,7 @@ and booleans, not configuration content.
 | Existing piece | How the coach uses it |
 |---|---|
 | Native Genie Code | All mutations and eval-run analysis |
-| [`mcp-genie-agent-versioning`](../mcp-genie-agent-versioning/) | Optional checkpoint before each accepted stage |
+| [`mcp-genie-agent-versioning`](../mcp/mcp-genie-agent-versioning/) | Optional checkpoint before each accepted stage |
 | Idea 1 multi-turn eval | Out of scope for v1; a later stage could recommend it once single-turn gates pass |
 | Idea 2 analytics | Could feed latency / error signals into diagnosis if that MCP exists |
 

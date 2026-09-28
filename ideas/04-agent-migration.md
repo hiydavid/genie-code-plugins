@@ -94,7 +94,7 @@ data sources has a payload that should not be manually edited through model cont
   overhead for a file rewrite that Genie Code can execute directly from a skill script.
   Zero server deployment: drop the folder in `.assistant/skills/`.
 - **Same "keep payloads out of model context" philosophy** as
-  [`mcp-genie-agent-versioning`](../mcp-genie-agent-versioning/): Genie Code orchestrates
+  [`mcp-genie-agent-versioning`](../mcp/mcp-genie-agent-versioning/): Genie Code orchestrates
   and executes the script; `serialized_space` never round-trips through the model. The
   script prints a compact change report instead of the payload. The skill's core job is
   to stop Genie Code from attempting this edit by hand — the re-sort and invariant rules
@@ -103,7 +103,7 @@ data sources has a payload that should not be manually edited through model cont
   cross-workspace identity; OBO tokens are workspace-scoped, so an App is the wrong shape
   for that hop regardless.
 - Mirrors the reasoning behind `diff_agent_versions` in
-  [`mcp-genie-agent-versioning`](../mcp-genie-agent-versioning/README.md) (formerly idea 3,
+  [`mcp-genie-agent-versioning`](../mcp/mcp-genie-agent-versioning/README.md) (formerly idea 3,
   since shipped): don't build server plumbing for work that is already local to where the
   agent lives.
 

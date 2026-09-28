@@ -82,7 +82,7 @@ enabled, `SELECT` on `system` catalog, warehouse `CAN USE`).
 
 ### 2. Materialization: app-bootstrapped MVs following the versioning-MCP pattern
 
-When [`mcp-genie-agent-versioning`](../mcp-genie-agent-versioning/) is deployed on Databricks Apps,
+When [`mcp-genie-agent-versioning`](../mcp/mcp-genie-agent-versioning/) is deployed on Databricks Apps,
 its App service principal runs an idempotent bootstrap (`server/provisioning.py`) that creates a
 schema in a designated catalog, its tables, row filters, and least-privilege grants — and never
 raises. The analytics feature reuses exactly that pattern:
