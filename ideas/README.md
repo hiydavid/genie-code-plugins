@@ -13,6 +13,7 @@ skills, native Genie features, or the existing [`mcp-genie-agent-versioning`](..
 | [4](./04-agent-migration.md) | Agent Migration & Portability | Genie Code workspace skill | Designed |
 | [5](./05-impact-analysis.md) | Multi-Agent Impact Analysis (UC Lineage) | MCP | Designed |
 | [6](./06-agent-production-coach.md) | Agent Production Coach | Markdown playbooks → workspace skill (optional diagnostic MCP later) | Designed |
+| [7](./07-persistent-agent-memory.md) | Persistent Agent Memory (MemCurrent Implementation Kit) | Target-dependent: CLI skill + MCP, or custom-agent workspace skill + template | Shaping |
 
 ## Prioritization Notes
 
@@ -31,6 +32,11 @@ skills, native Genie features, or the existing [`mcp-genie-agent-versioning`](..
   files packaged as a Genie Code workspace skill. A thin diagnostic MCP is only in scope
   after native inspection proves insufficient. It sequences native Genie Code verbs
   (instructions, benchmarks, eval review); it does not re-implement them.
+- Item 7 starts from the MemCurrent architecture. Its runtime primitives already ship as
+  managed Agent Memory, and workspace Genie Code has native personal memory; Genie Code CLI is
+  separate and does not document equivalent cross-conversation memory. The target remains under
+  discussion: a CLI memory skill + MCP, a custom-agent implementation/evaluation skill, or a
+  shared project-memory MCP for workspace Genie Code. Reimplementing storage is out of scope.
 - A custom slash-commands idea was dropped after research: Genie Code's slash commands
   are not user-extensible, and the underlying workflows are better served by workspace
   skills (items 4 and 6) and item 2's analytics skill.
