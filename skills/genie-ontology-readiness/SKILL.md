@@ -1,9 +1,8 @@
 ---
 name: genie-ontology-readiness
 description: "Assess whether one business domain's data and semantic layer are ready for a trustworthy Genie Ontology pilot, produce an evidence-backed verdict across six layers, and guide the next approved remediation. Use when asked whether data or the semantic layer is ready for Genie ('is our data ready for Genie', 'should we pilot Genie Ontology for sales'), to audit or assess Genie Ontology or semantic-layer readiness, to prepare a domain for a Genie One pilot or launch, or to act on the blockers and conditions such an assessment found. Not for isolated Genie Agent benchmark, instruction, or latency tuning (use databricks-genie-agents), estate-wide data-quality audits, or building semantic assets without a readiness question (use databricks-metric-views or databricks-unity-catalog)."
-compatibility: Designed for Genie Code Agent mode in the Databricks workspace; also runs from Claude Code or Cursor with the Databricks agent skills installed. Acts with the invoking user's Unity Catalog permissions. Genie One validation from the CLI needs databricks CLI >= v1.9.0 (databricks genie ask); without a CLI, validate in the Genie One UI as described in references/evidence-collection.md.
 metadata:
-  version: "0.2.0"
+  version: "0.3.0"
   parent: databricks-core
 ---
 
@@ -15,6 +14,13 @@ Use the six layers from [Operationalizing Genie Ontology in Your Data
 Stack](https://www.databricks.com/blog/operationalizing-genie-ontology-your-data-stack)
 as a progressive trust model, not as an all-or-nothing certification.
 
+Current Databricks documentation labels [Genie
+Ontology](https://docs.databricks.com/genie-one/chat#genie-ontology) as Public Preview
+and both [Pages](https://docs.databricks.com/uc-semantics/pages) and [Unity Catalog
+Wikis](https://docs.databricks.com/uc-semantics/wikis) as Beta. Recheck the workspace
+and current documentation during an assessment, and record a product availability
+limitation separately from a data or semantic-readiness failure.
+
 ## Runtime
 
 This skill is designed for Genie Code Agent mode inside the Databricks workspace and
@@ -25,10 +31,13 @@ search, and read-only SQL. Follow the runtime detection and sibling-skill routin
 [evidence-collection.md](references/evidence-collection.md) rather than asking the user
 for facts the workspace can show.
 
-Genie Code does not guarantee a terminal or the databricks CLI, and its managed MCP
-servers include Genie Agents but not Genie One. Check whether `databricks genie ask` is
-available before planning CLI validation. Otherwise the user runs representative
-questions in the Genie One UI and pastes the responses.
+Genie Code does not guarantee a terminal or the databricks CLI. Prefer the
+Databricks-provided [Genie One MCP](https://docs.databricks.com/agents/mcp-tools/genie-mcp)
+when it is available; Databricks recommends it for natural-language business questions,
+and it returns deep links to cited Databricks sources. Otherwise check whether
+`databricks genie ask` is available, then fall back to the Genie One UI. Use the actual
+intended user's identity for persona validation; a service principal result proves only
+the service principal's access and behavior.
 
 ## Operating principles
 
@@ -38,11 +47,13 @@ questions in the Genie One UI and pastes the responses.
   be discovered from available assets.
 - Label evidence as `verified`, `user-declared`, or `unknown`. Never turn missing access
   or missing evidence into a pass.
-- Keep the initial assessment read-only regardless of the host's tool-approval mode:
-  issue only `SELECT`, `SHOW`, and `DESCRIBE` statements and read-only API or CLI calls.
-  Genie Code's Auto-approve classifier is not a substitute for this rule.
-- Creating or changing data, semantic assets, permissions, certification, Pages, or
-  Genie Agents requires a separate, explicit in-chat approval from the user for the
+- Keep the initial assessment non-mutating for data and configuration regardless of the
+  host's tool-approval mode: issue only `SELECT`, `SHOW`, and `DESCRIBE` statements and
+  inspection calls. Genie One validation does create conversation, query-history, and
+  audit records; treat those as disclosed evaluation artifacts, not authorization to
+  edit data or semantic assets.
+- Creating or changing data, semantic assets, permissions, certification, Pages, Wikis,
+  or Genie Agents requires a separate, explicit in-chat approval from the user for the
   proposed action, even when the host would auto-approve the tool call.
 - Do not use a numeric readiness score. It hides critical blockers and implies precision
   the evidence does not support.
@@ -84,20 +95,21 @@ scope narrow.
    bullets there are the mandatory pilot criteria; apply its status decision table and
    verdict rules exactly so two assessments of the same scope reach the same verdict.
 4. Validate representative questions in Genie One. Judge two things separately:
-   - Answer correctness. Run each question through `databricks genie ask` via the
-     databricks-data-discovery skill when the CLI is available, or have the user run it
-     in the Genie One UI and paste the full response. Compare the answer and executed
-     SQL against the expected facts and acceptance criteria.
-   - Citation appropriateness. The CLI output has no citation field. Citations are
-     visible only through the citation icons in the Genie One UI, so this check happens
-     there, by the assessor or an owner. Record the sources cited and whether they are
-     the authoritative ones.
+   - Answer correctness. Use the Genie One MCP when configured; otherwise run each
+     question through `databricks genie ask` via the databricks-data-discovery skill, or
+     have the user run it in the Genie One UI and provide the full response. Compare the
+     answer and any executed SQL against the expected facts and acceptance criteria.
+   - Citation appropriateness. Review source deep links from the Genie One MCP, links
+     embedded in CLI answer text when present, or citation icons in the Genie One UI.
+     CLI JSON has no structured citation field, so use MCP or UI when its answer text
+     does not include the sources. Record whether the cited sources are authoritative.
 
    For every question record the answer path: Genie One searches Genie Agents first and
-   answers from a matching Agent before searching data assets, so a pass may belong to
-   an Agent rather than to the Ontology. Test materially different personas when more
-   than one is in scope. Label each result `verified` or `user-declared` per the rules
-   in readiness-model.md; a check that did not run stays `unknown`.
+   answers from a matching Agent before searching data assets and connected sources, so
+   attribute a pass to the actual cited path rather than automatically to the Ontology's
+   modeled head. Test materially different personas when more than one is in scope.
+   Label each result `verified` or `user-declared` per the rules in readiness-model.md;
+   a check that did not run stays `unknown`.
 5. Return the readiness card below. State the evidence behind every blocker and
    condition; avoid generic advice.
 
@@ -106,7 +118,7 @@ scope narrow.
 
 **Assessed:** <date> by <assessor>, running in <Genie Code | Claude Code | Cursor>
 **Scope:** <domain, workflow, target, personas>
-**Verdict:** Ready for pilot | Ready with conditions | Not ready
+**Verdict:** Ready for pilot | Ready with conditions | Not ready | Insufficient evidence
 **Owners and review cadence:** <pilot feedback owner(s) and review cadence; required for
 a `Ready for pilot` verdict>
 
@@ -162,7 +174,7 @@ A well-formed condition names the guardrail, the owner, and the review trigger:
 > **Condition:** Pilot questions are limited to the ARR, NRR, and pipeline measures in
 > `sales.gold.arr_metrics`; regional headcount questions are out of scope until the HR
 > join path is validated. Owner: sales analytics lead. Review when the `dim_region`
-> reconciliation lands or on 2026-10-15, whichever comes first.
+> reconciliation lands or on `<review-date>`, whichever comes first.
 
 ## Guide improvement only after the assessment
 

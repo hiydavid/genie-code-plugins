@@ -88,7 +88,10 @@ For the pilot path, establish that:
 - Sensitive fields are classified, and the relevant domain or business function is clear.
 
 Broader coverage, governed tag consistency, and automated metadata generation are
-expansion strengths. Machine-generated metadata remains unverified until reviewed.
+expansion strengths. A published Unity Catalog Wiki can add richer, owner-reviewed
+documentation for one critical table, but its absence is not a gap when table comments
+or another scoped source already establish the required facts. Machine-generated
+metadata remains unverified until reviewed.
 
 ### Layer 2: Business semantics
 
@@ -98,8 +101,8 @@ For the pilot path, establish that:
   primary and foreign keys reflect reality.
 - Each critical KPI has one governed definition. Prefer a Unity Catalog Metric View for
   measures, dimensions, filters, and relationships that must remain consistent.
-- Critical metrics expose useful agent metadata such as display names, synonyms, formats,
-  and example queries when relevant.
+- Critical metrics expose useful agent metadata such as comments, display names,
+  synonyms, and formats when relevant.
 - Ambiguous terms have owner-reviewed definitions and authoritative sources. Prefer
   published Unity Catalog Pages for shared concepts.
 - Assets are grouped into an appropriate Domain or subdomain when the feature is
@@ -108,10 +111,11 @@ For the pilot path, establish that:
 For a constrained pilot, a verified canonical definition outside a Metric View may be a
 condition rather than a blocker, but only with minimum evidence: a named owner, a dated
 artifact holding the definition, logic tested against representative questions, and a
-retrieval guardrail preventing a competing answer from reaching pilot users. Without
-any of these, treat the gap as a blocker when competing logic exists, the metric is high
-stakes, or the rollout target is `expand`. A missing Page or Domain is not automatically
-a blocker when the scoped terms and sources are already unambiguous.
+verified guardrail showing that competing definitions are either unavailable to pilot
+users or correctly deprioritized in citation tests. Without any of these, treat the gap
+as a blocker when competing logic exists, the metric is high stakes, or the rollout
+target is `expand`. A missing Page or Domain is not automatically a blocker when the
+scoped terms and sources are already unambiguous.
 
 ### Layer 3: Context-rich assets
 
@@ -133,6 +137,8 @@ record it in the expansion backlog.
 
 For the pilot path, establish that:
 
+- Intended personas have a qualifying Genie One entitlement and `CAN USE` on at least
+  one SQL warehouse.
 - Intended personas can access the required sources through maintainable group-based
   grants where practical.
 - Personas cannot retrieve sources or rows and columns they are not authorized to see.
@@ -141,10 +147,11 @@ For the pilot path, establish that:
 - When more than one materially different persona is in scope, the effect of
   permissions on answers and citations is tested for each of them.
 
-Unity AI Gateway controls (model access, guardrails, logging, rate and cost limits)
-govern model serving endpoints and MCP or agent traffic, not Genie One itself. They are
-in scope only when custom agents, Agent Bricks, or serving endpoints contribute to the
-pilot and organizational policy requires them.
+Unity Gateway access and policies apply when the pilot uses the Genie One MCP
+(`system.ai.genie_one_mcp`) or other Unity Gateway services. They do not replace Genie
+One's Unity Catalog permission checks. An MCP-based persona test also requires `EXECUTE`
+on that service and on-behalf-of user authentication. Legacy AI Gateway controls on
+Model Serving endpoints are in scope only when those endpoints contribute to the pilot.
 
 ### Layer 5: Evaluation and improvement
 
@@ -154,12 +161,15 @@ For the pilot path, establish that:
   boundaries in scope.
 - Each question has expected facts or an answer, an authoritative source, acceptance
   criteria, and an owner.
-- Each question's Genie One answer and executed SQL have been reviewed against its
-  acceptance criteria, and the answer path (Genie Agent or data-asset search) is
-  recorded.
-- Each question's citations have been reviewed in the Genie One UI and point to the
-  authoritative sources. The CLI does not expose citations, so this is a separate check
-  from answer correctness.
+- Each question's Genie One answer and any executed SQL have been reviewed against its
+  acceptance criteria, and the answer path (Genie Agent, data-asset search, connected
+  source, or personal context) is recorded.
+- Each question's citations have been reviewed through Genie One MCP source deep links,
+  source links embedded in CLI answer text, or the Genie One UI, and they point to the
+  authoritative sources. Citation review remains separate from answer correctness.
+- Validation accounts for workspace instructions and relevant user-specific memories,
+  prior conversations, installed skills, and connected sources, or uses a dedicated
+  clean pilot user so those inputs do not silently confound the result.
 - Failed questions are traced to their owning layer instead of patched with unrelated
   prose.
 - Feedback ownership and a review cadence exist for the pilot.
@@ -183,7 +193,7 @@ high checklist coverage elsewhere.
 
 ### Not ready
 
-Return `Not ready` when any of these affects the declared scope:
+Return `Not ready` when verified evidence shows any of these affects the declared scope:
 
 - Critical grain, entity identity, freshness, or data-quality integrity is unresolved.
 - A critical metric, term, relationship, or authoritative source is conflicting or has no
@@ -191,8 +201,13 @@ Return `Not ready` when any of these affects the declared scope:
 - An intended persona lacks necessary access, or sensitive data lacks required controls.
 - Representative ground truth is absent, a critical question fails acceptance criteria,
   or an answer relies on an inappropriate source.
-- A mandatory criterion is `unknown` or `not assessed`. Explain the evidence needed to
-  clear it rather than presenting the unknown itself as a product defect.
+
+### Insufficient evidence
+
+Return `Insufficient evidence` when no verified blocker already proves `Not ready`, but a
+mandatory criterion is `unknown` or `not assessed`. Name the exact evidence and access
+needed to reach a readiness verdict. Do not present an assessment limitation as a product
+or data defect.
 
 ### Ready with conditions
 
@@ -230,8 +245,9 @@ Route a failed answer to the layer that owns the meaning:
 | Failure | Correct destination |
 |---|---|
 | Mixed grain, duplicate entity, unreliable source data | Upstream data model or pipeline |
-| Business definition or synonym | Unity Catalog Page |
+| Business definition, synonym, or cross-asset concept | Unity Catalog Page |
 | Measure, dimension, filter, calculation, or relationship | Metric View |
-| Source description, classification, lifecycle, or access | Unity Catalog metadata or policy |
+| One table's purpose, intended use, sources, or caveats | Table metadata or a published Unity Catalog Wiki |
+| Classification, lifecycle, or access | Unity Catalog metadata or policy |
 | Stale or misleading inferred context | Source dashboard, query, notebook, documentation, or Agent |
 | Answer came from a Genie Agent with stale or conflicting context, or an Agent matched a question it should not own | That Agent's instructions, trusted assets, scope, or benchmarks via `databricks-genie-agents` |
