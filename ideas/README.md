@@ -10,7 +10,7 @@ skills, native Genie features, or the existing [`mcp-genie-agent-versioning`](..
 |---|---|---|---|
 | [1](./01-multi-turn-eval.md) | Multi-Turn Conversation Evaluation | MCP | Designed |
 | [2](./02-workspace-usage-analytics.md) | Workspace-Wide Usage Analytics | Genie Code skill + sibling app provisioning UC MVs (versioning-MCP bootstrap pattern) | Designed |
-| [4](./04-agent-migration.md) | Agent Migration & Portability | Genie Code workspace skill | Designed |
+| [4](./04-agent-migration.md) | Agent Build, Migration & Portability | Genie Code workspace skill | Designed |
 | [5](./05-impact-analysis.md) | Multi-Agent Impact Analysis (UC Lineage) | MCP | Designed |
 | [6](./06-agent-production-coach.md) | Agent Production Coach | Markdown playbooks → workspace skill (optional diagnostic MCP later) | Designed |
 | [7](./07-persistent-agent-memory.md) | Persistent Agent Memory (MemCurrent Implementation Kit) | Target-dependent: CLI skill + MCP, or custom-agent workspace skill + template | Shaping |
