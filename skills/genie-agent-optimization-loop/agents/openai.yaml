@@ -1,0 +1,4 @@
+interface:
+  display_name: "Genie Agent Optimization Loop"
+  short_description: "Run an auditable benchmark-driven tuning loop"
+  default_prompt: "/goal Use $genie-agent-optimization-loop to run a bounded optimization loop for Genie Agent <space-id>, targeting at least 90% valid benchmark accuracy and stopping after at most 3 rounds. Persist the run to <catalog>.<schema>.genie_agent_optimization_artifacts; you are authorized to create only that artifact table if absent, update only this Agent's configuration, and conditionally roll back optimizer-owned changes. Validate benchmarks without changing them."

@@ -13,6 +13,7 @@ Plugins and extensions for [Databricks Genie Code](https://docs.databricks.com/a
 | Skill | Description |
 | --- | --- |
 | [`genie-ontology-readiness`](./skills/genie-ontology-readiness/) | Evidence-backed, six-layer readiness assessment and guided remediation workflow for launching one business domain with Genie Ontology. |
+| [`genie-agent-optimization-loop`](./skills/genie-agent-optimization-loop/) | Bounded `/goal` workflow with UC-backed snapshots, benchmark QC, iterative Genie Agent tuning, safe rollback, and final audit. |
 
 Install a workspace skill by copying its folder to
 `Workspace/.assistant/skills/`. Skills can also be prototyped as user skills under
